@@ -11,15 +11,27 @@
 **因为这插件是大肥鱼写的，我也不懂。所以我只推荐直接告诉大肥鱼让她自己安装，以下是提示词**
 
 ```
-帮我安装一个插件：https://github.com/KDDKBD/DeepSeek-splash-animation
+帮我安装插件 https://github.com/KDDKBD/DeepSeek-splash-animation
+安装 spec 用 github:KDDKBD/DeepSeek-splash-animation（pnpm 的 git 形式）。
 
-用 plugin_manager 工具执行 install_bundle，target 填：
-github:KDDKBD/DeepSeek-splash-animation
+优先用 plugin_manager 工具：action=install_bundle，target 填上面的 spec。
 
-装完后告诉我需要重启DSH
+如果你的工具列表里没有 plugin_manager（源码版 dsh web 的默认 profile 就没挂这个包），
+就手动装，别猜路径：
+1. profile 目录是 <home>/profiles/<profile 名>，<home> 取 resolveDshHome() 的结果
+   （默认 $DSH_HOME，未设置时为 ~/.dsh）；如果那个目录不存在，先把实际位置告诉我，
+   不要自己编一个；
+2. 在该目录的 package.json 里加依赖 "dsh-splash-animation":
+   "github:KDDKBD/DeepSeek-splash-animation"，并把 "dsh-splash-animation"
+   加进 dsh.profile.bundles；
+3. 在该目录里用 DSH 自带的 pnpm 执行 install；
+4. 装完告诉我需要重启 DSH，以及设置页在哪儿。
 ```
 
-DSH 会自己改 profile、装依赖并启用插件。这一步需要你批准一次权限提升（插件代码运行在工作区沙箱之外）。
+**注意 `plugin_manager` 不是哪儿都有。** 它来自 `@deepseek-ai/dsh-plugin-manager` 包，
+而 `web` profile 的默认模板只有 `@deepseek-ai/dsh-base` 和 `@deepseek-ai/dsh-web-app`——
+所以从源码跑的 `dsh web` 里通常没有这个工具，DSH 会照着上面第 2 段手动装（那部分是准的，
+不依赖任何工具是否存在）。DSH 桌面版内置了这个包，所以桌面版走第一条就行。
 
 ## 普通安装法
 
@@ -30,13 +42,15 @@ npm install -g @deepseek-ai/dsh
 dsh plugin --profile web add github:KDDKBD/DeepSeek-splash-animation
 ```
 
-**都不行就手动改配置文件**：编辑
-`%APPDATA%\dsh-desktop\harness\profiles\web\package.json`，把依赖加进 `dependencies`、
-把 `dsh-splash-animation` 加进 `dsh.profile.bundles`，然后在
-`%APPDATA%\dsh-desktop\harness\profiles\web\` 下执行 `pnpm install`
-（`pnpm` 可以直接用 `%APPDATA%\dsh-desktop\harness\.desktop-bin\pnpm.cmd`）。
+**都不行就手动改配置文件**：先找到 profile 目录，默认在 `<home>/profiles/<profile 名>`
+（`<home>` 是 `$DSH_HOME`，未设置时为 `~/.dsh`）。DSH 桌面版的实际位置是
+`%APPDATA%\dsh-desktop\harness\profiles\web`。然后编辑该目录的 `package.json`，
+把依赖加进 `dependencies`、把 `dsh-splash-animation` 加进 `dsh.profile.bundles`，
+并在该目录下执行 `pnpm install`（没有全局 pnpm 就用桌面版自带的
+`%APPDATA%\dsh-desktop\harness\.desktop-bin\pnpm.cmd`）。
 
-以上方式装完都**重启 DSH** 生效。`--profile web` 是 DSH Desktop 与 `dsh web` 使用的 profile 名称。
+以上方式装完都**重启 DSH** 生效。`--profile web` 只用于命令行；DSH 桌面版虽然内部也是 `web`
+profile，但它自己决定，不需要你指定。
 
 卸载：在 **设置 → 插件** 里停用或卸载，或者
 
