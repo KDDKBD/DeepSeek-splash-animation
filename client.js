@@ -27,6 +27,32 @@ window.__ModuleLoader__.load({
   id: 'dsh-splash-animation',
   factory(require) {
     const React = require('react')
+    const { createPortal } = require('react-dom')
+
+    /**
+     * Mount splash nodes as direct children of `<body>`.
+     *
+     * A slot's own outlet wrapper is `display: contents`, so it adds no box — but
+     * it does not remove the slot's ANCESTORS, and any ancestor that creates a
+     * stacking context (a `transform`, a `filter`, `contain`, `isolation`, …) traps
+     * a descendant's `z-index` inside it. A high `z-index` then loses to any
+     * sibling stacked in the root context, however small its number: measured with
+     * `position: fixed; z-index: 9999` inside `<body>` and
+     * `position: fixed; z-index: 2147483000` inside a `transform`ed wrapper, the
+     * 9999 element paints on top. That is exactly the reported symptom — the
+     * wallet widget (9999, body-level) covered the splash, and raising the number
+     * could not have fixed it.
+     *
+     * Portalling to `<body>` puts the splash in the root stacking context, where
+     * the number finally means what it says. DSH's own `Menu` does the same.
+     *
+     * @param node - the element to place.
+     * @returns the portal, or the node unchanged when there is no body yet.
+     */
+    function topLayer(node) {
+      if (typeof document === 'undefined' || document.body === null) return node
+      return createPortal(node, document.body)
+    }
 
     const BASE = '/dsh-splash-animation'
     const CONFIG_URL = `${BASE}/config.json`
@@ -465,11 +491,12 @@ window.__ModuleLoader__.load({
 
       if (session.phase === 'loading') {
         // A bare cover for one microtask, so the application is never visible
-        // mid-animation.
-        return React.createElement('div', {
+        // mid-animation. Portalled like the splash itself: it hides the same
+        // interface, so it needs the same reach.
+        return topLayer(React.createElement('div', {
           'aria-hidden': true,
           style: { position: 'fixed', inset: 0, background: '#000000', pointerEvents: 'auto' },
-        })
+        }))
       }
 
       const settings = session.settings
@@ -478,6 +505,8 @@ window.__ModuleLoader__.load({
       const overlayStyle = {
         position: 'fixed',
         inset: 0,
+        // Highest value the CSS property takes, but see `topLayer`: the number is
+        // only decisive once the splash sits in the root stacking context.
         zIndex: 2147483000,
         display: 'grid',
         placeItems: 'center',
@@ -561,11 +590,11 @@ window.__ModuleLoader__.load({
         }, t.skip))
       }
 
-      return React.createElement('div', {
+      return topLayer(React.createElement('div', {
         style: overlayStyle,
         onClick: settings.skip === 'click' ? dismiss : undefined,
         'data-dsh-splash-animation': '',
-      }, children)
+      }, children))
     }
 
     /** Shared field styling for the settings page. */

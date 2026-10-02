@@ -161,6 +161,8 @@ globalThis.window = {
   },
 }
 globalThis.document = {
+  // The portal target the splash must use; see the `react-dom` stub below.
+  body: { nodeType: 1 },
   createElement() {
     return { canPlayType: () => 'maybe' }
   },
@@ -176,6 +178,18 @@ check(typeof registration?.factory === 'function', 'the registration carries a f
 
 /** Captured from inside the factory so the module face can be inspected. */
 let face
+/**
+ * Portal targets the browser half asked for.
+ *
+ * The splash must reach the root stacking context. A slot's outlet wrapper is
+ * `display: contents`, but its ANCESTORS are untouched, and any ancestor that
+ * creates a stacking context (transform/filter/contain/isolation) confines a
+ * descendant's `z-index` — measured: `fixed; z-index: 9999` at body level paints
+ * over `fixed; z-index: 2147483000` inside a transformed wrapper. So a bare
+ * `position: fixed` splash is at the mercy of whatever wraps its slot, which is
+ * how another plugin's widget ended up on top of it.
+ */
+const portalTargets = []
 const require = (specifier) => {
   if (specifier === 'react') {
     return {
@@ -184,6 +198,17 @@ const require = (specifier) => {
       useEffect: () => {},
       useRef: (initial) => ({ current: initial }),
       useCallback: (fn) => fn,
+    }
+  }
+  if (specifier === 'react-dom') {
+    // `require('react-dom')` with `createPortal` is the same specifier DSH's own
+    // client bundles use (e.g. @deepseek-ai/dsh-client-ui-plugin-manager), and
+    // its Menu portalled to document.body the same way.
+    return {
+      createPortal: (node, target) => {
+        portalTargets.push(target)
+        return node
+      },
     }
   }
   throw new Error(`the browser half required an undeclared module: ${specifier}`)
@@ -283,14 +308,18 @@ wire = {
 {
   const injectedAgain = []
   const registeredAgain = []
+  /** The component each registration carried; `register(options, component)`. */
+  const registerOptions = []
+  let renderComponent
   face.apply({
     slots: {
       inject(slot, run) {
         injectedAgain.push(slot)
         run()
       },
-      register(options) {
+      register(options, registeredComponent) {
         registeredAgain.push(options)
+        registerOptions.push({ name: options.name, component: registeredComponent })
       },
     },
   })
@@ -299,6 +328,105 @@ wire = {
   check(overlay !== undefined, 'and registers the overlay entry')
   check(overlay?.id === manifest.name, 'the overlay entry id is the package name, so a re-registration replaces it')
   check(typeof overlay?.order === 'number', 'the overlay entry declares an order', String(overlay?.order))
+
+  /**
+   * Render the splash once and require that its nodes reach `<body>`.
+   *
+   * A slot's outlet wrapper is `display: contents`, but its ancestors are not
+   * touched, and any ancestor that creates a stacking context (transform, filter,
+   * contain, isolation) confines a descendant's `z-index`. Measured: a body-level
+   * `position: fixed; z-index: 9999` paints over `position: fixed;
+   * z-index: 2147483000` inside a transformed wrapper — which is how another
+   * plugin's widget ended up on top of the splash. Raising the number cannot fix
+   * that; only leaving the ancestor's stacking context can.
+   *
+   * `SplashAnimation` calls hooks in a fixed order, and the first `useState` is
+   * the session. A `loading` session returns the pre-paint cover through the same
+   * `topLayer` helper the splash uses, so the mounting decision is exercised
+   * without needing a decodable media payload. This pins placement, not animation.
+   */
+  const component = registerOptions.find((entry) => entry.name === 'shell.overlay')?.component
+  check(typeof component === 'function', 'the overlay entry carries a component to render')
+
+  if (typeof component === 'function') {
+    const portalTargets = []
+    let hookAt = 0
+    const renderRequire = (specifier) => {
+      if (specifier === 'react') {
+        return {
+          createElement: (type, props, ...children) => ({ type, props, children }),
+          useState: (initial) => {
+            hookAt += 1
+            return [hookAt === 1 ? { phase: 'loading' } : initial, () => {}]
+          },
+          useRef: (initial) => {
+            hookAt += 1
+            return { current: initial }
+          },
+          useEffect: () => {
+            hookAt += 1
+          },
+          useCallback: (fn) => {
+            hookAt += 1
+            return fn
+          },
+        }
+      }
+      if (specifier === 'react-dom') {
+        return {
+          createPortal: (node, target) => {
+            portalTargets.push(target)
+            return node
+          },
+        }
+      }
+      throw new Error(`the browser half required an undeclared module: ${specifier}`)
+    }
+
+    // A second module instance, so this render cannot perturb the one above.
+    const renderFace = registration.factory(renderRequire)
+    renderFace.apply({
+      slots: {
+        inject(slot, run) {
+          run()
+        },
+        register(options, registeredComponent) {
+          if (options.name === 'shell.overlay') renderComponent = registeredComponent
+        },
+      },
+    })
+    if (typeof renderComponent === 'function') renderComponent({})
+    check(portalTargets.length > 0, 'the splash renders through a portal at all', String(portalTargets.length))
+    check(
+      portalTargets.length > 0 && portalTargets.every((target) => target === globalThis.document.body),
+      'and portals into document.body, the one place no slot ancestor can confine its z-index',
+      portalTargets.map((target) => (target === globalThis.document.body ? 'body' : String(target?.nodeType ?? target))).join(', '),
+    )
+    // Without a body there is nothing to portal into; the node must still render
+    // rather than throw, because a module can be materialized before `<body>`.
+    const savedBody = globalThis.document.body
+    globalThis.document.body = null
+    portalTargets.length = 0
+    renderFace.apply({
+      slots: {
+        inject(slot, run) {
+          run()
+        },
+        register(options, registeredComponent) {
+          if (options.name === 'shell.overlay') renderComponent = registeredComponent
+        },
+      },
+    })
+    let threw = false
+    try {
+      if (typeof renderComponent === 'function') renderComponent({})
+    } catch {
+      threw = true
+    }
+    globalThis.document.body = savedBody
+    check(!threw, 'a missing <body> degrades to an unportalled node instead of throwing')
+    check(portalTargets.length === 0, 'and no portal is attempted without a body', String(portalTargets.length))
+  }
 }
 
 /**
