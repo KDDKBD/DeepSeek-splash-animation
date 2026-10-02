@@ -18,7 +18,7 @@ const PACKAGE_DIR = resolve(fileURLToPath(new URL('../', import.meta.url)))
 const manifest = JSON.parse(readFileSync(join(PACKAGE_DIR, 'package.json'), 'utf8'))
 
 /** Always included by npm, allowlist or not. */
-const ALWAYS = ['package.json', 'README.md', 'README.zh.md', 'LICENSE', 'CHANGELOG.md']
+const ALWAYS = ['package.json', 'README.md', 'LICENSE', 'CHANGELOG.md']
 
 /** Recursively list files under `dir`, relative to the package root. */
 function walk(dir) {

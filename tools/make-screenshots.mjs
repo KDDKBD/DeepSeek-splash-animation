@@ -12,7 +12,7 @@
  * the plugin actually plays is a misleading listing image.
  *
  * What the screenshots therefore do NOT prove is that DSH itself mounted the
- * overlay; they are a faithful render of the plugin's own layer, and `README.zh.md`
+ * overlay; they are a faithful render of the plugin's own layer, and `README.md`
  * says so where it matters.
  *
  * Two shots are produced:

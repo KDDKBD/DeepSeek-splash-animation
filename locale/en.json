@@ -1,4 +1,0 @@
-{
-  "title": "Splash animation",
-  "description": "Ships with a default video, so the splash works as soon as it is installed. Swap in your own video from Settings; it dissolves over 0.3 seconds once it has played out. Clear the path to turn it off completely."
-}

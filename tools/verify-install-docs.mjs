@@ -76,7 +76,7 @@ console.log('\ninstallation claims in the READMEs')
 /** Phrases that mark a command as explicitly not-yet-usable. */
 const UNAVAILABLE_MARKERS = /尚未|不要用|会失败|不存在|未发布|not published|do not use|fails|no such package|becomes valid/i
 
-for (const file of ['README.md', 'README.zh.md']) {
+for (const file of ['README.md']) {
   const lines = readFileSync(join(PACKAGE_DIR, file), 'utf8').split(/\r?\n/)
 
   // A bare-name install: `... add <name>` with no spec prefix and nothing glued on.

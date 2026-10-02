@@ -106,9 +106,9 @@ console.log('\nmarketplace listing requirements')
     check(false, 'the declared icon file exists', String(manifest.icon))
   }
 
-  // Images the READMEs embed are what a storefront falls back to when no
+  // Images the README embeds are what a storefront falls back to when no
   // screenshots are declared, so a broken path here is a broken listing.
-  for (const readme of ['README.md', 'README.zh.md']) {
+  for (const readme of ['README.md']) {
     const file = join(PACKAGE_DIR, readme)
     const source = readFileSync(file, 'utf8')
     const embeds = [...source.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)].map((match) => match[1].trim())

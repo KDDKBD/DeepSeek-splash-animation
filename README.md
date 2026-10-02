@@ -1,119 +1,119 @@
 # dsh-splash-animation
 
-A **custom opening animation** for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): it plays a video while DSH starts, then dissolves over 0.3 seconds to reveal the interface.
+给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 加一段**自定义开屏动画**：启动时播放你指定的视频，播完后 0.3 秒渐隐，露出 DSH 界面。
 
-A default video ships with the plugin, so it **works as soon as you install it**. You can swap in your own from Settings.
+插件自带一段默认视频，**装上就能用**，也可以在设置里换成自己的。
 
-![The splash playing full-frame, with the skip control at the bottom right](assets/screenshot-splash.png)
+![开屏动画：视频铺满画面，右下角是跳过按钮](assets/screenshot-splash.png)
 
-## Install
+## 安装
 
 ```bash
 dsh plugin --profile web add github:KDDKBD/DeepSeek-splash-animation
 ```
 
-Restart DSH afterwards. `--profile web` is the profile DSH Desktop uses.
+装完**重启 DSH** 生效。`--profile web` 是 DSH Desktop 使用的 profile 名称。
 
-To pin a version:
+想锁定版本：
 
 ```bash
 dsh plugin --profile web add github:KDDKBD/DeepSeek-splash-animation#v0.4.0
 ```
 
-You can also install from the UI: sidebar → **Plugins** → install bundle, with the address above.
+也可以在界面里安装：侧边栏 **插件** → 安装组合包，填入上面的地址。
 
-Uninstall:
+卸载：
 
 ```bash
 dsh plugin --profile web remove dsh-splash-animation
 ```
 
-> This plugin is **not published to npm**, so `add dsh-splash-animation` fails. Use the GitHub address above.
-> The GitHub route requires `git` to be installed.
+> 本插件**尚未发布到 npm**，`add dsh-splash-animation` 会失败，请使用上面的 GitHub 地址。
+> GitHub 方式需要本机装有 `git`。
 
-## Usage
+## 使用
 
-After installing and restarting, the splash plays the bundled video.
+装好重启后就有开屏动画，播放的是插件自带的视频。
 
-To use your own: open **Settings → Plugins → Splash animation**, click **Choose file…** and pick a video, then **Save**. You can also paste a path into the field.
+要换成自己的：打开 **设置 → 插件 → 开屏动画**，点「选择文件…」在弹出的文件框里挑一个视频，点「保存」。也可以直接把路径粘进输入框。
 
-To turn it off completely: click **Clear** on the same page.
+要彻底关掉：在同一个页面点「清除」。
 
-## Behaviour
+## 行为
 
-| State | What happens |
+| 状态 | 表现 |
 |---|---|
-| Never configured | Plays the bundled video |
-| A path is set | Plays that video. An invalid path plays **nothing** (it does not fall back to the bundled video) and the settings page says why |
-| Cleared | Plays **nothing**; DSH starts exactly as if the plugin were not installed |
+| 没设置过 | 播放插件自带的视频 |
+| 设置了路径 | 播放该视频。路径无效则**不播放**（不会回退到自带视频），原因显示在设置页 |
+| 点过「清除」 | **不播放**，DSH 与未安装插件时一致 |
 
-The video holds on its last frame, then fades out. The fade is 0.3 seconds by default.
+视频播完会停在最后一帧，然后渐隐消失。默认渐隐 0.3 秒。
 
-## Configuration
+## 配置
 
-Override any field in the profile's `cordis.patch.yml` (on Windows usually `%APPDATA%\dsh-desktop\harness\profiles\web\cordis.patch.yml`):
+在 profile 的 `cordis.patch.yml` 里写覆盖项即可调整细节（Windows 上通常是 `%APPDATA%\dsh-desktop\harness\profiles\web\cordis.patch.yml`）：
 
 ```yaml
 - id: dsh-splash-animation
   config:
-    fit: cover        # fill the frame, cropping the excess
-    muted: false      # with audio
-    fadeOutMs: 600    # dissolve over 0.6 s
-    skip: click       # click anywhere to skip
+    fit: cover        # 铺满裁切
+    muted: false      # 带声音
+    fadeOutMs: 600    # 渐隐时长改为 0.6 秒
+    skip: click       # 点任意位置跳过
 ```
 
-| Field | Default | Meaning |
+| 字段 | 默认 | 说明 |
 |---|---|---|
-| `src` | empty | Video path. Empty uses the bundled video; clearing it disables playback |
-| `fadeOutMs` | `300` | How long the dissolve takes once the video has played out |
-| `fadeInMs` | `320` | Fade-in duration when it appears |
-| `skip` | `button` | `button` (corner) / `click` (anywhere) / `auto` (on a timer) / `never` |
-| `skipAfterMs` | `1200` | With `skip: auto` only |
-| `muted` | `true` | Muted by default, because Chromium blocks unmuted autoplay |
-| `volume` | `0.6` | Volume, 0–1 |
-| `fit` | `contain` | `contain` (letterboxed) / `cover` (filled, cropped) / `fill` (stretched) |
-| `background` | `#000000` | Backdrop colour |
-| `playbackRate` | `1` | Playback speed, 0.1–4 |
-| `duration` | `0` | Maximum playback in ms; `0` plays to the end |
-| `maxReplays` | `0` | Replays after the first play |
-| `holdAfterEndMs` | `0` | Pause between the last frame and the dissolve |
-| `waitForAppMs` | `2500` | Animated images only: they have no end event, so they exit on a timer |
+| `src` | 空 | 视频路径。空 = 使用自带视频；清空后不再播放 |
+| `fadeOutMs` | `300` | 播完后渐隐的时长（毫秒） |
+| `fadeInMs` | `320` | 出现时的淡入时长 |
+| `skip` | `button` | 退出方式：`button` 右下角按钮 / `click` 点任意位置 / `auto` 自动 / `never` 不可退出 |
+| `skipAfterMs` | `1200` | 仅 `skip: auto` 时有效 |
+| `muted` | `true` | 是否静音。默认静音，因为 Chromium 会拦截带声音的自动播放 |
+| `volume` | `0.6` | 音量 0–1 |
+| `fit` | `contain` | `contain` 完整显示留边 / `cover` 铺满裁切 / `fill` 拉伸 |
+| `background` | `#000000` | 画面底色 |
+| `playbackRate` | `1` | 播放倍速 0.1–4 |
+| `duration` | `0` | 最长播放毫秒数，`0` 表示播放到结束 |
+| `maxReplays` | `0` | 重复播放次数 |
+| `holdAfterEndMs` | `0` | 播完到开始渐隐之间的停顿 |
+| `waitForAppMs` | `2500` | 仅动图使用：动图没有结束事件，只能按时间退出 |
 
-An invalid value falls back to its default rather than failing startup.
+字段填写有误只会退回默认值，不会导致启动失败。
 
-## Supported formats
+## 支持的格式
 
-Video, rendered as `<video>`: `mp4`, `m4v`, `webm`, `mov`, `mkv`, `ogv`, `ogm`, `mpg`, `mpeg`, `ts`
+视频用 `<video>` 播放：`mp4`、`m4v`、`webm`、`mov`、`mkv`、`ogv`、`ogm`、`mpg`、`mpeg`、`ts`
 
-Animated and still images, rendered as `<img>`: `gif`, `apng`, `webp`, `avif`, `png`, `jpg`, `jpeg`, `svg`, `bmp`, `ico`
+动图与静态图用 `<img>` 显示：`gif`、`apng`、`webp`、`avif`、`png`、`jpg`、`jpeg`、`svg`、`bmp`、`ico`
 
-**`webm` (VP9) and `mp4` (H.264) are the safe choices** — both play everywhere.
+**推荐 `webm`(VP9) 或 `mp4`(H.264)**，这两个在所有平台上都能播放。
 
-`mov` and `mkv` are only containers, so whether one plays depends on the codec inside; ProRes or DNxHD will not decode. To transcode:
+`mov` 和 `mkv` 只是容器，能否播放取决于内部编码：装 ProRes 或 DNxHD 就无法解码。转码命令：
 
 ```bash
 ffmpeg -i input.mov -c:v libx264 -crf 20 -pix_fmt yuv420p -movflags +faststart -an opening.mp4
 ffmpeg -i input.mov -c:v libvpx-vp9 -crf 32 -b:v 0 -an opening.webm
 ```
 
-`-movflags +faststart` moves the index to the front of the file, so playback can start before the whole file has downloaded.
+`-movflags +faststart` 把索引移到文件开头，播放器不必下完整个文件就能起播。
 
-## Troubleshooting
+## 常见问题
 
-**A video is selected but nothing plays**
-Check that the settings page says it will play, and that `src` in `%APPDATA%\dsh-desktop\harness\dsh-splash-animation\config.json` is the path you expect. After changing settings, reload the page — no restart needed.
+**选了视频但没有播放**
+检查设置页是否显示「下次启动播放」，以及 `%APPDATA%\dsh-desktop\harness\dsh-splash-animation\config.json` 里的 `src` 是否正确。设置改动后刷新页面即可生效，不需要重启。
 
-**Picture but no sound**
-Chromium only allows audio before user interaction if the media is muted, and a splash runs before any interaction. The plugin retries muted automatically, so you get the picture without sound.
+**有画面但没声音**
+Chromium 要求用户先与页面交互才允许播放带声音的媒体，而开屏发生在交互之前。插件会自动静音重试，所以画面正常、声音没有。
 
-**The DSH whale still appears at startup**
-That is the Electron main window loading its own startup screen before the harness starts; a plugin cannot replace it. This plugin covers the part after it.
+**启动时还能看到 DSH 自己的小鲸鱼**
+那是 Electron 主窗口在 harness 启动前加载的启动画面，插件无法替换。插件负责的是它之后的那一段。
 
-**Choose file… seems to do nothing**
-The dialog opens on the machine running DSH. If you are driving the UI from another machine you will not see it — paste the path instead.
+**「选择文件…」没有反应**
+对话框在运行 DSH 的机器上弹出，如果你是从另一台机器访问浏览器界面就看不到它，直接手输路径即可。
 
-## License
+## 许可
 
-MIT, covering the plugin code.
+MIT，覆盖插件代码。
 
-`assets/default.mp4` is example artwork and is not covered by that licence. If you redistribute or fork this, confirm the rights for any media you ship; replacing that file is all it takes to use your own.
+`assets/default.mp4` 是示例素材，不属于该授权的范围；二次分发或 fork 时请自行确认素材权利，替换该文件即可换成自己的素材。
