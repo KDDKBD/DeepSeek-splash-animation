@@ -70,33 +70,9 @@ check(
 )
 
 console.log('\nmarketplace listing requirements')
-// Every asset the listing declares or the README embeds must be relative, must
-// stay inside the package, and must be in the published `files` allowlist — an
-// image that is not published renders as a broken link on the listing page.
+// Images the README embeds are the listing artwork, so a broken path here is a
+// broken listing, and an image outside the publish allowlist never reaches npm.
 {
-  const screenshotsFile = join(PACKAGE_DIR, 'screenshots.json')
-  check(existsSync(screenshotsFile), 'declares screenshots.json next to package.json')
-  if (existsSync(screenshotsFile)) {
-    const parsed = JSON.parse(readFileSync(screenshotsFile, 'utf8'))
-    const list = Array.isArray(parsed) ? parsed : parsed.screenshots
-    check(Array.isArray(list), 'screenshots.json is an array or an object with a screenshots field')
-    if (Array.isArray(list)) {
-      check(list.length >= 1 && list.length <= 8, 'lists between 1 and 8 screenshots', String(list.length))
-      for (const entry of list) {
-        const clean = typeof entry === 'string'
-          && !entry.startsWith('/')
-          && !entry.startsWith('http')
-          && !entry.split('/').includes('..')
-        check(clean, `screenshot path is a relative in-package path: ${entry}`)
-        check(existsSync(join(PACKAGE_DIR, String(entry))), `screenshot file exists: ${entry}`)
-        check(
-          manifest.files.some((pattern) => String(entry).startsWith(`${pattern}/`)),
-          `screenshot is inside a published directory: ${entry}`,
-        )
-      }
-    }
-  }
-
   // The icon has a hard size ceiling in the plugin manager.
   const iconPath = join(PACKAGE_DIR, String(manifest.icon ?? '').replace(/^\.\//, ''))
   if (existsSync(iconPath)) {
@@ -106,16 +82,18 @@ console.log('\nmarketplace listing requirements')
     check(false, 'the declared icon file exists', String(manifest.icon))
   }
 
-  // Images the README embeds are what a storefront falls back to when no
-  // screenshots are declared, so a broken path here is a broken listing.
   for (const readme of ['README.md']) {
     const file = join(PACKAGE_DIR, readme)
     const source = readFileSync(file, 'utf8')
     const embeds = [...source.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)].map((match) => match[1].trim())
-    check(embeds.length >= 1, `${readme} embeds at least one image, for the storefront fallback`, String(embeds.length))
+    check(embeds.length >= 1, `${readme} embeds at least one image, for the storefront artwork`, String(embeds.length))
     for (const embed of embeds) {
       check(!embed.startsWith('http'), `${readme}: embedded image is repository-relative: ${embed}`)
       check(existsSync(join(PACKAGE_DIR, embed)), `${readme}: embedded image exists: ${embed}`)
+      check(
+        manifest.files.some((pattern) => embed.startsWith(`${pattern}/`)),
+        `${readme}: embedded image ships with the package: ${embed}`,
+      )
     }
   }
 

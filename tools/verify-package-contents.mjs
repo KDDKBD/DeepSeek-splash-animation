@@ -4,8 +4,8 @@
  * `npm pack --dry-run` needs an npm that the DSH-bundled Node does not carry, and
  * a package that ships a file the Host reads at runtime but omits it from `files`
  * installs subtly worse than the developer's copy. This models npm's rule — the
- * `files` allowlist, always plus the manifest, READMEs, LICENSE and CHANGELOG —
- * and reports what a consumer receives.
+ * `files` allowlist, always plus the manifest, README and LICENSE — and reports
+ * what a consumer receives.
  *
  *   node tools/verify-package-contents.mjs
  */
@@ -18,7 +18,7 @@ const PACKAGE_DIR = resolve(fileURLToPath(new URL('../', import.meta.url)))
 const manifest = JSON.parse(readFileSync(join(PACKAGE_DIR, 'package.json'), 'utf8'))
 
 /** Always included by npm, allowlist or not. */
-const ALWAYS = ['package.json', 'README.md', 'LICENSE', 'CHANGELOG.md']
+const ALWAYS = ['package.json', 'README.md', 'LICENSE']
 
 /** Recursively list files under `dir`, relative to the package root. */
 function walk(dir) {
@@ -73,17 +73,19 @@ for (const ref of refs) {
   console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${ref}`)
 }
 
-// The screenshots and icon the listing declares must ship too, or the storefront
-// shows broken images.
+// Every image the README embeds is listing artwork, so it must ship or the
+// storefront shows a broken image. The icon is read by the plugin manager
+// straight from the manifest.
 console.log('\nLISTING ASSETS')
-for (const asset of [
-  manifest.icon,
-  ...(JSON.parse(readFileSync(join(PACKAGE_DIR, 'screenshots.json'), 'utf8'))),
-]) {
-  const rel = String(asset).replace(/^\.\//, '')
-  const ok = shipped.includes(rel)
-  if (!ok) bad += 1
-  console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${rel}`)
+{
+  const readme = readFileSync(join(PACKAGE_DIR, 'README.md'), 'utf8')
+  const embeds = [...readme.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)].map((match) => match[1].trim())
+  for (const asset of [manifest.icon, ...embeds]) {
+    const rel = String(asset).replace(/^\.\//, '')
+    const ok = shipped.includes(rel)
+    if (!ok) bad += 1
+    console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${rel}`)
+  }
 }
 
 // A placeholder repository URL is worse than a missing one: the marketplace

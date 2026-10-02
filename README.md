@@ -14,10 +14,10 @@ dsh plugin --profile web add github:KDDKBD/DeepSeek-splash-animation
 
 装完**重启 DSH** 生效。`--profile web` 是 DSH Desktop 使用的 profile 名称。
 
-想锁定版本：
+想锁定版本（`#` 后面跟仓库的 tag）：
 
 ```bash
-dsh plugin --profile web add github:KDDKBD/DeepSeek-splash-animation#v0.4.0
+dsh plugin --profile web add github:KDDKBD/DeepSeek-splash-animation#v0.4.2
 ```
 
 也可以在界面里安装：侧边栏 **插件** → 安装组合包，填入上面的地址。
