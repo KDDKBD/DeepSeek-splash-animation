@@ -1,0 +1,28 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # These four need neither network access nor a running DSH, which is what
+      # makes them safe here. `tools/verify-http.mjs` drives a live server and
+      # stays a manual step.
+      - name: Host logic (config coercion, media resolution, the engage gate, picker encoding)
+        run: node tools/verify-host.mjs
+      - name: Routes (all four routes, driven in-process)
+        run: node tools/verify-routes.mjs
+      - name: Contract (manifest, Host exports, browser registration, cross-half config)
+        run: node tools/verify-contract.mjs
+      - name: Package contents (runtime and listing files survive npm publish)
+        run: node tools/verify-package-contents.mjs --allow-placeholders
+

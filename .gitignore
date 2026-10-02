@@ -1,0 +1,13 @@
+# 依赖与构建产物
+node_modules/
+*.tgz
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 验证脚本与渲染工具的临时输出
+tools/*.out
+*.bak

@@ -1,0 +1,23 @@
+# dsh-splash-animation — bundle patch
+#
+# 这是插件的「挂载声明」。DSH 启动时按 bundle 层栈叠加各插件的 patch，
+# 本文件把开屏动画插件插入当前 profile 的配置树。
+#
+# 安装：
+#   dsh plugin --profile web add dsh-splash-animation
+# 或本地开发：
+#   dsh plugin --profile web add <本目录绝对路径>
+#
+# 配置示例（覆盖行来改 config；只写想改的字段）：
+#   - id: dsh-splash-animation
+#     name: dsh-splash-animation
+#     config:
+#       src: D:/wallpapers/opening.webm
+#       skip: button
+#       muted: false
+#
+# 完整字段见 README.zh.md「配置」一节。
+
+- insert:
+    - id: dsh-splash-animation
+      name: dsh-splash-animation
