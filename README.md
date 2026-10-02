@@ -6,24 +6,46 @@
 
 ![开屏动画：视频铺满画面，右下角是跳过按钮](assets/screenshot-splash.png)
 
-## 安装
+## 推荐安装法
+
+**因为这插件是大肥鱼写的，我也不懂。所以我只推荐直接告诉大肥鱼让她自己安装，以下是提示词**
+
+```
+帮我安装一个插件：https://github.com/KDDKBD/DeepSeek-splash-animation
+
+用 plugin_manager 工具执行 install_bundle，target 填：
+github:KDDKBD/DeepSeek-splash-animation
+
+装完后告诉我需要重启DSH
+```
+
+DSH 会自己改 profile、装依赖并启用插件。这一步需要你批准一次权限提升（插件代码运行在工作区沙箱之外）。
+
+## 普通安装法
+
+**如果上面那条走不通**，用命令行（`dsh` **不随 DSH Desktop 附带**，要先从 npm 装）：
 
 ```bash
+npm install -g @deepseek-ai/dsh
 dsh plugin --profile web add github:KDDKBD/DeepSeek-splash-animation
 ```
 
-装完**重启 DSH** 生效。`--profile web` 是 DSH Desktop 使用的 profile 名称。
+**都不行就手动改配置文件**：编辑
+`%APPDATA%\dsh-desktop\harness\profiles\web\package.json`，把依赖加进 `dependencies`、
+把 `dsh-splash-animation` 加进 `dsh.profile.bundles`，然后在
+`%APPDATA%\dsh-desktop\harness\profiles\web\` 下执行 `pnpm install`
+（`pnpm` 可以直接用 `%APPDATA%\dsh-desktop\harness\.desktop-bin\pnpm.cmd`）。
 
-也可以在界面里安装：侧边栏 **插件** → 安装组合包，填入上面的地址。
+以上方式装完都**重启 DSH** 生效。`--profile web` 是 DSH Desktop 与 `dsh web` 使用的 profile 名称。
 
-卸载：
+卸载：在 **设置 → 插件** 里停用或卸载，或者
 
 ```bash
 dsh plugin --profile web remove dsh-splash-animation
 ```
 
-> 本插件**尚未发布到 npm**，`add dsh-splash-animation` 会失败，请使用上面的 GitHub 地址。
-> GitHub 方式需要本机装有 `git`。
+> 界面里的插件市场只接受社区精选列表内的来源，本插件收录之前那里看不到它。
+> 通过 GitHub 安装需要本机装有 `git`。
 
 ## 使用
 
