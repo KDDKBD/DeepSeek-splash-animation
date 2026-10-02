@@ -2,6 +2,24 @@
 
 本项目的所有重要变更都记录在此文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.2] - 2025-10-02
+
+默认铺满画面，不再上下留黑边。
+
+### 变更（破坏性）
+
+- **`fit` 默认从 `contain` 改为 `cover`。** 此前默认完整显示素材，窗口比 16:9 更窄时就会在**上下留黑边**。现在默认按比例放大到铺满整屏、裁掉超出部分、不拉伸——这正是「16:9 视频在 16:10 屏幕上裁掉一点左右」的效果。想恢复完整显示（留边）写 `fit: contain`。
+- 实测三种取值的差别并出图：`contain` 上下留黑边、`cover` 铺满裁切、`fill` 铺满但拉伸。图为 `assets/fit-compare.png`，已加入上架截图。
+
+### 新增
+
+- `tools/compare-fit.mjs`：渲染 `contain`/`cover`/`fill` 的并排对照图（`npm run fit-compare`）。
+
+### 修复
+
+- `tools/verify-install-docs.mjs` 在 Node 24 上以非零状态退出：`fetch` 用的 undici 全局 agent 在退出时仍持有 socket，触发 libuv 断言（`UV_HANDLE_CLOSING`）。断言虽然通过，退出码却不是 0，会让 CI 失败。改用 `node:https` 直接请求，socket 生命周期可控，连跑三次退出码稳定为 0。
+- `tools/compare-fit.mjs` 的初版把 `fit` 写进了 CSS 规则名、元素上却是固定类名，样式根本没应用到素材上，于是「对照图」两半逐字节相同——**一次什么都没证明的对照**。改为固定尺寸面板（不依赖 `--window-size`，该值含窗口 chrome、与真实视口不一致）。
+
 ## [0.4.1] - 2025-10-02
 
 文档与元数据只保留中文。

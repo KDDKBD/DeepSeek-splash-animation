@@ -1,6 +1,6 @@
 {
   "name": "dsh-splash-animation",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "DSH 开屏动画：自带一个默认视频，装好即可用；也能在设置里换成自己的视频，播完后 0.3 秒渐隐露出界面，并顶掉壳自己的加载画面。清空路径即彻底关闭。",
   "keywords": [
     "dsh",
@@ -39,15 +39,17 @@
   "//": "tools/ 里只有 pick-media-file.ps1 进包：宿主半在运行时按路径读取它来弹原生文件对话框，漏掉它会让文件选择静默降级成只能手输路径。其余 tools/ 与 docs/ 刻意不进包——使用者不需要调研笔记与验证脚本，要读请去仓库。",
   "icon": "./icon.svg",
   "scripts": {
-    "verify": "node tools/verify-host.mjs && node tools/verify-routes.mjs && node tools/verify-contract.mjs && node tools/verify-package-contents.mjs",
+    "verify": "node tools/verify-host.mjs && node tools/verify-routes.mjs && node tools/verify-contract.mjs && node tools/verify-install-docs.mjs && node tools/verify-package-contents.mjs",
     "verify:all": "npm run verify && npm run verify:http",
     "verify:host": "node tools/verify-host.mjs",
     "verify:routes": "node tools/verify-routes.mjs",
     "verify:contract": "node tools/verify-contract.mjs",
+    "verify:install-docs": "node tools/verify-install-docs.mjs",
     "verify:package": "node tools/verify-package-contents.mjs",
     "verify:http": "node tools/verify-http.mjs",
     "poster": "node tools/make-poster.mjs assets/default.mp4 assets/poster.png --last --size 1280x720",
-    "screenshots": "node tools/make-screenshots.mjs"
+    "screenshots": "node tools/make-screenshots.mjs",
+    "fit-compare": "node tools/compare-fit.mjs assets/fit-compare.png"
   },
   "repository": {
     "type": "git",

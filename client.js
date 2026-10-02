@@ -163,7 +163,9 @@ window.__ModuleLoader__.load({
       skipAfterMs: 1200,
       muted: true,
       volume: 0.6,
-      fit: 'contain',
+      // Full-screen by default: scale to cover the frame and crop the overflow,
+      // rather than letterboxing with black bands.
+      fit: 'cover',
       background: '#000000',
       fadeInMs: 320,
       // How long the dissolve takes once the video has finished playing.

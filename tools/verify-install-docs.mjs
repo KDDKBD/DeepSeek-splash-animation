@@ -23,6 +23,7 @@
  */
 
 import { readFileSync } from 'node:fs'
+import https from 'node:https'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -58,18 +59,37 @@ let published = false
 if (offline) {
   console.log('  skip  --offline: assuming the package is NOT published')
 } else {
-  try {
-    const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(manifest.name)}`, { method: 'GET' })
-    published = response.status === 200
-    check(
-      response.status === 200 || response.status === 404,
-      'the registry answered (200 published, 404 not)',
-      String(response.status),
+  // `node:https` rather than `fetch`: undici's global agent left a socket handle
+  // open at exit, and Node 24 then aborted with a libuv assertion
+  // (`UV_HANDLE_CLOSING` in async.c) — turning a passing run into a non-zero exit
+  // status. A check that passes but fails its caller is worse than no check, and
+  // this request needs no pooling anyway.
+  const status = await new Promise((settle) => {
+    const request = https.request(
+      {
+        hostname: 'registry.npmjs.org',
+        path: `/${encodeURIComponent(manifest.name)}`,
+        method: 'HEAD',
+        headers: { Connection: 'close', 'User-Agent': 'dsh-splash-animation-verify' },
+        timeout: 15000,
+      },
+      (response) => {
+        response.resume()
+        response.on('end', () => settle(response.statusCode ?? 0))
+      },
     )
-    console.log(`  info  registry says: ${published ? 'PUBLISHED' : 'NOT PUBLISHED'}`)
-  } catch (error) {
-    console.log(`  warn  registry unreachable (${error.message}); assuming NOT PUBLISHED`)
-  }
+    request.on('timeout', () => {
+      request.destroy()
+      settle(0)
+    })
+    request.on('error', () => settle(0))
+    request.end()
+  })
+
+  published = status === 200
+  check(status === 200 || status === 404, 'the registry answered (200 published, 404 not)', String(status))
+  if (status === 0) console.log('  warn  registry unreachable; assuming NOT PUBLISHED')
+  else console.log(`  info  registry says: ${published ? 'PUBLISHED' : 'NOT PUBLISHED'}`)
 }
 
 console.log('\ninstallation claims in the READMEs')

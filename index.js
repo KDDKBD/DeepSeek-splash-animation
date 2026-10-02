@@ -143,7 +143,15 @@ export const DEFAULTS = {
   skipAfterMs: 1200,
   muted: true,
   volume: 0.6,
-  fit: 'contain',
+  /**
+   * How the artwork fills the window.
+   *
+   * Defaults to `cover`: the splash is a full-screen surface, so scaling the media
+   * up until it covers the frame — cropping whatever overflows, never stretching —
+   * is what fills the screen. `contain` would letterbox, which on a 16:9 video in
+   * a wider window leaves black bands top and bottom.
+   */
+  fit: 'cover',
   background: '#000000',
   fadeInMs: 320,
   /**

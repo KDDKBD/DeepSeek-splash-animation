@@ -56,7 +56,7 @@ dsh plugin --profile web remove dsh-splash-animation
 ```yaml
 - id: dsh-splash-animation
   config:
-    fit: cover        # 铺满裁切
+    fit: contain      # 完整显示（默认是 cover 铺满裁切）
     muted: false      # 带声音
     fadeOutMs: 600    # 渐隐时长改为 0.6 秒
     skip: click       # 点任意位置跳过
@@ -71,7 +71,7 @@ dsh plugin --profile web remove dsh-splash-animation
 | `skipAfterMs` | `1200` | 仅 `skip: auto` 时有效 |
 | `muted` | `true` | 是否静音。默认静音，因为 Chromium 会拦截带声音的自动播放 |
 | `volume` | `0.6` | 音量 0–1 |
-| `fit` | `contain` | `contain` 完整显示留边 / `cover` 铺满裁切 / `fill` 拉伸 |
+| `fit` | `cover` | `cover` 铺满裁切（默认，不拉伸，超出部分裁掉）/ `contain` 完整显示、四周留边 / `fill` 拉伸填满 |
 | `background` | `#000000` | 画面底色 |
 | `playbackRate` | `1` | 播放倍速 0.1–4 |
 | `duration` | `0` | 最长播放毫秒数，`0` 表示播放到结束 |
@@ -80,6 +80,14 @@ dsh plugin --profile web remove dsh-splash-animation
 | `waitForAppMs` | `2500` | 仅动图使用：动图没有结束事件，只能按时间退出 |
 
 字段填写有误只会退回默认值，不会导致启动失败。
+
+### 画面怎么填满
+
+默认 `fit: cover`：**按比例放大到铺满整个画面，超出的部分裁掉，不拉伸**。视频比窗口更宽就裁两侧，更高就裁上下。
+
+如果素材被裁掉的部分不能少，改成 `fit: contain` 就会完整显示，代价是四周留黑边。
+
+![三种填充方式对比：contain 上下留黑边、cover 铺满裁切、fill 拉伸](assets/fit-compare.png)
 
 ## 支持的格式
 

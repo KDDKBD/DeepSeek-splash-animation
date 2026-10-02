@@ -14,15 +14,22 @@ jobs:
         with:
           node-version: '20'
 
-      # These four need neither network access nor a running DSH, which is what
-      # makes them safe here. `tools/verify-http.mjs` drives a live server and
-      # stays a manual step.
+      # None of these need a running DSH. `tools/verify-http.mjs` drives a live
+      # server and stays a manual step.
       - name: Host logic (config coercion, media resolution, the engage gate, picker encoding)
         run: node tools/verify-host.mjs
       - name: Routes (all four routes, driven in-process)
         run: node tools/verify-routes.mjs
       - name: Contract (manifest, Host exports, browser registration, cross-half config)
         run: node tools/verify-contract.mjs
-      - name: Package contents (runtime and listing files survive npm publish)
-        run: node tools/verify-package-contents.mjs --allow-placeholders
 
+      # Network access is needed to ask the registry whether the package exists;
+      # a 404 is the expected answer until it is published.
+      - name: Install docs (README advertises only install routes that work)
+        run: node tools/verify-install-docs.mjs
+
+      # --allow-placeholders is for CI only: it skips the repository-URL check so a
+      # fork without its URLs filled in still validates its packaging. Drop the flag
+      # locally before publishing.
+      - name: Package contents (runtime and listing files survive npm publish)
+        run: node tools/verify-package-contents.mjs
