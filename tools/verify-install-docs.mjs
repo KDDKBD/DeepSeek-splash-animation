@@ -59,11 +59,10 @@ let published = false
 if (offline) {
   console.log('  skip  --offline: assuming the package is NOT published')
 } else {
-  // `node:https` rather than `fetch`: undici's global agent left a socket handle
-  // open at exit, and Node 24 then aborted with a libuv assertion
-  // (`UV_HANDLE_CLOSING` in async.c) — turning a passing run into a non-zero exit
-  // status. A check that passes but fails its caller is worse than no check, and
-  // this request needs no pooling anyway.
+  // 用 `node:https` 而不是 `fetch`：undici 的全局 agent 在进程退出时仍持有
+  // socket，Node 24 会因此触发 libuv 断言（async.c 的 UV_HANDLE_CLOSING），把一个
+  // 通过的检查变成非零退出码。断言通过却让调用方失败，比没有检查更糟。这个请求
+  // 也不需要连接复用。
   const status = await new Promise((settle) => {
     const request = https.request(
       {
