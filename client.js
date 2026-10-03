@@ -417,6 +417,57 @@ window.__ModuleLoader__.load({
         setPhase('out')
       }, [])
 
+      /**
+       * While the splash owns the screen it also owns input.
+       *
+       * The overlay covers the viewport, so every pointer event the user can produce
+       * is aimed at it. That is not enough on its own: another plugin can claim a
+       * click by POSITION rather than by target. The wallet widget installs a
+       * document-level capture listener that hit-tests the pointer against its own
+       * artwork and, on a hit, calls `stopPropagation()` — and its exemption list
+       * names only its own `.dshwv-*` elements, so it cannot know about anybody
+       * else's overlay.
+       *
+       * Measured on a live page, clicking this control:
+       *
+       *   stopPropagation() on pointerdown target=BUTTON  << onDocPointerDown
+       *   stopPropagation() on pointerup   target=BUTTON  << onDocPointerUp
+       *   stopPropagation() on click       target=BUTTON  << onDocClickStopper
+       *
+       * The splash never dismissed, and the widget played its own press sound. A
+       * capture listener on `window` runs before any listener on `document`, so
+       * handling the event here — and stopping it — keeps the splash's own control
+       * working and keeps the other plugin's handlers out of the interaction
+       * entirely, sound included.
+       *
+       * `stopPropagation` rather than `preventDefault`: suppressing the browser's own
+       * handling of a click inside a full-screen overlay buys nothing and risks
+       * breaking focus, while stopping the bubble is exactly the intent.
+       */
+      React.useEffect(() => {
+        // Read from `session`, not from the render-scoped `settings`, because hooks
+        // must run on every render — including the first, where the payload has not
+        // arrived and this is still the one-frame cover.
+        const skipMode = (session.settings && session.settings.skip) || 'button'
+        const onPointer = (event) => {
+          event.stopPropagation()
+        }
+        const onClick = (event) => {
+          event.stopPropagation()
+          const target = event.target
+          const onSkip = target !== null && target !== undefined
+            && typeof target.closest === 'function'
+            && target.closest('[data-dsh-splash-skip]') !== null
+          if (onSkip || skipMode === 'click') dismiss()
+        }
+        window.addEventListener('pointerdown', onPointer, true)
+        window.addEventListener('click', onClick, true)
+        return () => {
+          window.removeEventListener('pointerdown', onPointer, true)
+          window.removeEventListener('click', onClick, true)
+        }
+      }, [session.settings, dismiss])
+
       React.useEffect(() => {
         if (session.phase !== 'ready') return undefined
         const settings = session.settings
@@ -665,6 +716,10 @@ window.__ModuleLoader__.load({
         children.push(React.createElement('button', {
           key: 'skip',
           type: 'button',
+          // The marker is what the window-level capture listener looks for; it cannot
+          // rely on this element's own React handler, because a click here is claimed
+          // by another plugin before it can reach the button. See the effect above.
+          'data-dsh-splash-skip': '',
           onClick: (event) => {
             event.stopPropagation()
             dismiss()

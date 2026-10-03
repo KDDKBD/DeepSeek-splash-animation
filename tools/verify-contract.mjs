@@ -512,6 +512,44 @@ wire = {
 }
 
 /**
+ * The splash's control must survive another plugin claiming the same corner.
+ *
+ * The wallet widget installs a document-level capture listener that hit-tests the
+ * pointer against its own artwork and calls `stopPropagation()`; its exemption list
+ * names only its own elements. Measured on a live page, clicking the skip control
+ * produced `stopPropagation() on click target=BUTTON << at onDocClickStopper
+ * (dsh-whale/widget.js)`, so the splash never dismissed and the widget played its
+ * press sound instead.
+ *
+ * `window` capture runs before any `document` capture, which is the whole reason
+ * this works. A `document`-level listener here would lose the same race, so the
+ * target node is asserted rather than assumed.
+ */
+{
+  const windowCaptureClick = /window\.addEventListener\(\s*'click'[\s\S]{0,80}?true\s*\)/.test(clientSource)
+  check(
+    windowCaptureClick,
+    'the splash listens for clicks on window in the capture phase, ahead of any document listener',
+  )
+  check(
+    /window\.addEventListener\(\s*'pointerdown'[\s\S]{0,80}?true\s*\)/.test(clientSource),
+    'and for pointerdown too, so another plugin cannot play its own click sound over the splash',
+  )
+  check(
+    clientSource.includes("'data-dsh-splash-skip'"),
+    'the skip control carries a marker for that listener to find',
+  )
+  check(
+    clientSource.includes("closest('[data-dsh-splash-skip]')"),
+    'and the listener identifies the control by that marker rather than by tag name',
+  )
+  check(
+    !/document\.addEventListener\(\s*'click'[\s\S]{0,80}?true\s*\)/.test(clientSource),
+    'nothing is delegated at the document level, where another plugin can pre-empt it',
+  )
+}
+
+/**
  * The rescue-timer arithmetic, checked through the diagnostic surface the plugin
  * exposes (`globalThis.__DSH_SPLASH__.fadeDelayFor`).
  *

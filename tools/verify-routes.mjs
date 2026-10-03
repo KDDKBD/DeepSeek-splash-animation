@@ -13,7 +13,7 @@
  *   node tools/verify-routes.mjs
  */
 
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { Writable } from 'node:stream'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -35,6 +35,21 @@ function check(ok, label, detail) {
 }
 
 /**
+ * Every scratch home this run created, removed when the process ends.
+ *
+ * `mount()` runs once per scenario, so a suite that leaves its directories behind
+ * adds one to the system temp folder per scenario per run. That is how 783 of them
+ * accumulated during development, which is a defect in the check, not a fact of
+ * life about temp folders.
+ */
+const scratchHomes = []
+process.on('exit', () => {
+  for (const dir of scratchHomes) {
+    try { rmSync(dir, { recursive: true, force: true }) } catch { /* best effort */ }
+  }
+})
+
+/**
  * Mount the plugin against a fake host and return its routes.
  *
  * @param options - `home` (DSH home), `config` (row config), `picker` (dialog stub).
@@ -42,6 +57,11 @@ function check(ok, label, detail) {
  */
 function mount(options = {}) {
   const home = options.home ?? mkdtempSync(join(tmpdir(), 'splash-routes-'))
+  // Only the homes this run created are removed; a caller-supplied `home` is the
+  // caller's to manage.
+  if (options.home === undefined) {
+    scratchHomes.push(home)
+  }
   const mediaDir = join(home, 'media')
   mkdirSync(mediaDir, { recursive: true })
 

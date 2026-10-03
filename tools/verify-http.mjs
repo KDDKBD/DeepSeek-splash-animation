@@ -17,7 +17,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -149,6 +149,13 @@ const SYNTHETIC = {
   path: join(tmpdir(), `dsh-splash-verify-${process.pid}.mp4`),
   size: 48 * 1024,
 }
+
+// Removed when the process ends: this suite drives a live server and may exit
+// through a path that skips the tail of the file, and a check that leaves a 48 KiB
+// file behind on every run is a slow leak in the system temp folder.
+process.on('exit', () => {
+  try { rmSync(SYNTHETIC.path, { force: true }) } catch { /* best effort */ }
+})
 
 console.log('\nsaving a video through the settings route')
 {

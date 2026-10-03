@@ -9,7 +9,7 @@
  *   node tools/verify-host.mjs
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -31,6 +31,13 @@ function check(ok, label, detail) {
 
 /** A scratch DSH home so nothing touches the real one. */
 const home = mkdtempSync(join(tmpdir(), 'splash-home-'))
+
+// Removed when the process ends. A check that leaves its scratch directory behind
+// fills the system temp folder a little more on every run: during development this
+// one alone accumulated 52 directories, and `verify-routes.mjs` accumulated 783.
+process.on('exit', () => {
+  try { rmSync(home, { recursive: true, force: true }) } catch { /* best effort */ }
+})
 
 // A real file for the "is a file" path, and a directory for the negative case.
 const mediaDir = join(home, 'media')
