@@ -362,6 +362,36 @@ console.log('\nsuppressing the shell boot layer')
     String(row?.text),
   )
 
+  /**
+   * The same row also covers the application until the splash is mounted.
+   *
+   * Plugin client modules arrive in batches, so this one executes a second or two
+   * after the page starts while anything inline in index.html has already run.
+   * Suppressing the boot layer alone therefore opens a hole: loading screen gone,
+   * application painted, splash not here yet. The cover has to be in the served
+   * HTML, and it has to release itself when the splash mounts.
+   */
+  check(
+    typeof row?.text === 'string' && row.text.includes('[data-dsh-splash-pin]'),
+    'the same row also covers the application until the splash mounts',
+    String(row?.text),
+  )
+  check(
+    typeof row?.text === 'string' && /body:not\(:has\(> \[data-dsh-splash-pin\]\)\)\s*>\s*#root/.test(row.text),
+    'the cover is scoped to #root and asks about a body-level sibling, which is where the portal lands',
+    String(row?.text),
+  )
+  check(
+    typeof row?.text === 'string' && row.text.includes('visibility:hidden'),
+    'the cover hides rather than removes, so layout cannot shift under it',
+    String(row?.text),
+  )
+  check(
+    typeof row?.text === 'string' && !/[{;]\s*animation(-delay)?\s*:/.test(row.text),
+    'no CSS timer releases the cover: animation-delay accumulates across reloads and would stop working silently',
+    String(row?.text),
+  )
+
   // Re-firing the event must not grow the table: the host may collect more than once.
   const twice = indexInjections(listeners)
   check(twice.length === 1, 're-collecting does not push a duplicate row', String(twice.length))

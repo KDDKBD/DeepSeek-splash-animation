@@ -737,9 +737,41 @@ export function apply(ctx, rawConfig, options = {}) {
       if (media.configured !== true || media.problem !== undefined) return
       const alreadyPresent = table.some((row) => row && row.kind === 'style' && typeof row.text === 'string' && row.text.includes('dsh-splash-animation-boot'))
       if (alreadyPresent) return
+      // Two rules, and the second one is the fix for a real flash.
+      //
+      // Plugin client modules are fetched by the shell in batches: this module
+      // arrives with the "application" batch, tens of modules and a megabyte or so,
+      // so it runs a second or two after the page starts. Anything inline in
+      // index.html runs immediately by comparison — the whale widget, for one, and
+      // it paints a body-level fixed element of its own.
+      //
+      // Suppressing the boot layer alone therefore opens a hole: the shell's
+      // loading screen is gone, the application is painted, and the splash has not
+      // arrived yet. The user sees the interface (plus whatever else mounted early)
+      // and only then the splash. `#root` is the application's mount point, so the
+      // splash covers the screen from the very first paint by hiding it here, in a
+      // rule that is in the served HTML rather than in the late module.
+      //
+      // The cover releases itself, with no bookkeeping on either side: the selector
+      // asks whether a node carrying `data-dsh-splash-pin` is already a child of
+      // `#root`'s stacking root, so the moment the splash's own opaque node is
+      // mounted the condition is false and `#root` becomes visible again — while the
+      // splash is covering the screen, which is the point.
+      //
+      // Nothing removes the style element, deliberately. A removable row would need
+      // an identity the injection format does not carry (`kind: 'style'` renders only
+      // `text`), and a lost removal would hide the application forever. A
+      // self-cancelling rule cannot get stuck, and it also re-arms if the splash
+      // unmounts early.
+      //
+      // There is deliberately no CSS timer as a fallback either. `animation-delay`
+      // does not restart when the same rule set is re-served, so the delay would
+      // accumulate across reloads and eventually release the cover immediately — a
+      // fallback that silently stops working is worse than none.
       table.push({
         kind: 'style',
-        text: '/* dsh-splash-animation-boot */ [data-dsh-boot]:has([data-dsh-boot-spinner]){display:none!important}',
+        text: '/* dsh-splash-animation-boot */ [data-dsh-boot]:has([data-dsh-boot-spinner]){display:none!important}'
+          + '/* dsh-splash-animation-pin */ body:not(:has(> [data-dsh-splash-pin])) > #root{visibility:hidden!important}',
       })
     } catch { /* a broken settings read must not break index rendering */ }
   })
