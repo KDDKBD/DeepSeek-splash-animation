@@ -350,6 +350,28 @@ wire = {
 
   if (typeof component === 'function') {
     const portalTargets = []
+    /** The nodes handed to `createPortal`, so their inline styles can be inspected. */
+    const portalNodes = []
+    /** Effects the component schedules through `useLayoutEffect`, run immediately. */
+    const layoutEffects = []
+    /**
+     * A stand-in for the Host's injected cover, so the release can be observed.
+     *
+     * The Host renders its style row as plain `<style>text</style>` with no id, so
+     * the client finds the element by its text content. `document.head` is stubbed
+     * with exactly that shape.
+     */
+    const coverNode = {
+      textContent: '/* dsh-splash-animation-boot */ x{display:none}/* dsh-splash-animation-cover */ #root{visibility:hidden!important}',
+      removed: false,
+      remove() { this.removed = true },
+      parentNode: null,
+    }
+    const unrelatedNode = { textContent: '.something-else{color:red}', removed: false, remove() { this.removed = true }, parentNode: null }
+    globalThis.document.head = {
+      getElementsByTagName: (name) => (name === 'style' ? [unrelatedNode, coverNode] : []),
+    }
+
     let hookAt = 0
     const renderRequire = (specifier) => {
       if (specifier === 'react') {
@@ -366,6 +388,12 @@ wire = {
           useEffect: () => {
             hookAt += 1
           },
+          // The release runs in a LAYOUT effect; invoking it here stands in for
+          // "after commit, before paint", which is where it must happen.
+          useLayoutEffect: (fn) => {
+            hookAt += 1
+            layoutEffects.push(fn)
+          },
           useCallback: (fn) => {
             hookAt += 1
             return fn
@@ -376,6 +404,7 @@ wire = {
         return {
           createPortal: (node, target) => {
             portalTargets.push(target)
+            portalNodes.push(node)
             return node
           },
         }
@@ -402,6 +431,59 @@ wire = {
       'and portals into document.body, the one place no slot ancestor can confine its z-index',
       portalTargets.map((target) => (target === globalThis.document.body ? 'body' : String(target?.nodeType ?? target))).join(', '),
     )
+
+    /**
+     * Every splash node carries a z-index, the loading cover included.
+     *
+     * A `position: fixed` node with `z-index: auto` sits at level 0 of the root
+     * stacking context, so anything positioned with a positive z-index paints over
+     * it — and other plugins mount body-level overlays in the thousands (the wallet
+     * widget uses 9999 through 22000). Measured on a live page while the loading
+     * cover lacked a number: the cover was in the DOM, and `elementFromPoint` at the
+     * viewport centre returned the application's own input box on the frames before
+     * the real overlay replaced it. That gap is the flash.
+     */
+    const layered = portalNodes.map((node) => node?.props?.style ?? {})
+    check(layered.length > 0, 'at least one splash node was rendered', String(layered.length))
+    const zValues = layered.map((style) => style.zIndex)
+    check(
+      zValues.every((z) => typeof z === 'number' && z > 0),
+      'every splash node sets a z-index, so nothing positioned can paint over it',
+      JSON.stringify(zValues),
+    )
+    check(
+      new Set(zValues).size === 1,
+      'and they all use the same level, so the loading cover and the splash cannot trade places',
+      JSON.stringify(zValues),
+    )
+    check(
+      layered.every((style) => style.position === 'fixed'),
+      'each of them is fixed to the viewport, so the cover has no dependence on layout',
+      JSON.stringify(layered.map((style) => style.position)),
+    )
+
+    /**
+     * The Host's cover must be dropped, exactly once, from a layout effect.
+     *
+     * This is the regression that locked the interface away: the cover used to be
+     * released by a CSS condition that re-armed when the splash unmounted. It is now
+     * an element the client removes, so the release is permanent — and it has to run
+     * BEFORE paint, or the application shows for a frame uncovered.
+     */
+    check(layoutEffects.length === 1, 'the component schedules exactly one layout effect', String(layoutEffects.length))
+    for (const effect of layoutEffects) effect()
+    check(coverNode.removed, 'that effect removes the Host cover, revealing the application')
+    check(!unrelatedNode.removed, 'and leaves every other injected style element alone')
+    // Idempotent: a second run must not throw, which is what makes it safe to call
+    // from more than one branch.
+    let secondRunThrew = false
+    try {
+      for (const effect of layoutEffects) effect()
+    } catch {
+      secondRunThrew = true
+    }
+    check(!secondRunThrew, 'running the release again is a no-op rather than an error')
+
     // Without a body there is nothing to portal into; the node must still render
     // rather than throw, because a module can be materialized before `<body>`.
     const savedBody = globalThis.document.body

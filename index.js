@@ -711,7 +711,8 @@ export function apply(ctx, rawConfig, options = {}) {
     return normalizeConfig(merged)
   }
 
-  // Suppress the shell's own boot layer while our splash owns the screen.
+  // Suppress the shell's own boot layer while our splash owns the screen, and
+  // cover the application until the splash has painted.
   //
   // The startup order is: the native splash window → the harness starts → the web
   // page loads → the shell paints `[data-dsh-boot]` ("Loading plugins…") → our
@@ -737,9 +738,66 @@ export function apply(ctx, rawConfig, options = {}) {
       if (media.configured !== true || media.problem !== undefined) return
       const alreadyPresent = table.some((row) => row && row.kind === 'style' && typeof row.text === 'string' && row.text.includes('dsh-splash-animation-boot'))
       if (alreadyPresent) return
+      // Three rules, and the release mechanism is the whole point — an earlier
+      // attempt used a self-cancelling SELECTOR and locked the interface away (see
+      // `COVER_MARKERS` in client.js).
+      //
+      // Plugin client modules are delivered in batches, so this one executes a second
+      // or two after the page starts, while anything inline in index.html has already
+      // run (the whale widget, for one, and it paints a body-level fixed element of
+      // its own).
+      //
+      // The shell's own stylesheet paints `body{background-color:#fff}` in light mode
+      // and `#151517` in dark mode, and its boot layer is a JS-created element inside
+      // `#root`. Hiding the boot layer and `#root` therefore leaves the BODY's
+      // background on screen, white on a light-mode machine, for as long as the page
+      // takes to reach this module — a flash of light that reads as "the interface
+      // appeared and then vanished".
+      //
+      // So: suppress the boot layer, cover the application, and force the base colour
+      // dark. All three sit in the served HTML, so they apply from the first paint
+      // rather than from this module.
+      //
+      // The cover and the base colour are removed by the client, exactly once, when
+      // it has the splash mounted. Nothing re-applies them: the elements are gone
+      // from the document, so they cannot come back when the splash later unmounts.
+      // That one-way property is what the previous attempt lacked.
       table.push({
         kind: 'style',
-        text: '/* dsh-splash-animation-boot */ [data-dsh-boot]:has([data-dsh-boot-spinner]){display:none!important}',
+        text: '/* dsh-splash-animation-boot */ [data-dsh-boot]:has([data-dsh-boot-spinner]){display:none!important}'
+          + '/* dsh-splash-animation-cover */ #root{visibility:hidden!important}'
+          + '/* dsh-splash-animation-base */ html,body{background-color:#000!important}',
+      })
+
+      // A bounded way out if the client module never runs.
+      //
+      // The cover above is removed by client.js, which is the point — a release the
+      // client owns is one-way and cannot re-arm. But "the client always runs" is an
+      // assumption, and if it is wrong the outcome is the worst kind: `#root` hidden
+      // and the boot layer suppressed together leave a black screen with no way back,
+      // because the shell's own failure report renders inside `#root` too.
+      //
+      // So a fresh inline script arms a fresh timer on every page load and takes the
+      // rules away if nobody else has. A NEW script element per load is what makes
+      // this safe: a re-served CSS `animation-delay` would accumulate across reloads
+      // and eventually release the cover immediately, which is why the cover carries
+      // no timer of its own. The timeout is generous on purpose — this must never
+      // fire during a slow but healthy start, because firing early is a visible
+      // flash, while firing late only shortens an already-broken black screen.
+      table.push({
+        kind: 'script',
+        placement: 'head',
+        text: '/* dsh-splash-animation-guard */'
+          + 'try{'
+          + 'var m=["dsh-splash-animation-cover","dsh-splash-animation-base"];'
+          + 'var go=function(){try{'
+          + 'var ss=document.head?document.head.getElementsByTagName("style"):[],doomed=[];'
+          + 'for(var i=0;i<ss.length;i++){var x=ss[i].textContent||"";'
+          + 'for(var j=0;j<m.length;j++){if(x.indexOf(m[j])!==-1){doomed.push(ss[i]);break}}}'
+          + 'for(var k=0;k<doomed.length;k++){doomed[k].remove()}}catch(e){}};'
+          + 'var t=setTimeout(go,10000);'
+          + 'globalThis.__DSH_SPLASH_COVER_GUARD__={release:go,clear:function(){clearTimeout(t)}}'
+          + '}catch(e){}',
       })
     } catch { /* a broken settings read must not break index rendering */ }
   })

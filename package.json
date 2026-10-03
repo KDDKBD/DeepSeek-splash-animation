@@ -1,6 +1,6 @@
 {
   "name": "dsh-splash-animation",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "DSH 开屏动画：自带一个默认视频，装好即可用；也能在设置里换成自己的视频，播完后 0.3 秒渐隐露出界面。清空路径即彻底关闭。",
   "keywords": [
     "dsh",

@@ -54,6 +54,80 @@ window.__ModuleLoader__.load({
       return createPortal(node, document.body)
     }
 
+    /**
+     * The stacking level every splash node uses.
+     *
+     * Every one of them, including the one-frame loading cover: a `position: fixed`
+     * element with `z-index: auto` sits at level 0 of the root stacking context and
+     * is painted over by anything positioned with a positive z-index. Other plugins
+     * mount body-level overlays in the thousands, so a cover without a number is a
+     * cover that does not cover. That was a real, measured defect — see the loading
+     * cover below.
+     */
+    const TOP_Z = 2147483000
+
+    /**
+     * Markers inside the Host's rules, used to find and remove the style element.
+     *
+     * The Host hides `#root` from the first paint and forces a dark base colour,
+     * because this module arrives a second or two after the page starts (plugin
+     * client modules are fetched in batches). Without that, a light-theme machine
+     * shows the shell's white `body` background, and whatever else painted early,
+     * before the splash covers anything.
+     *
+     * The rules have to be REMOVED HERE, not released by a selector, and the
+     * difference is not stylistic. An earlier version wrapped the cover in a
+     * condition that asked whether a marked node was mounted, which reads as
+     * self-cancelling: mount the splash and the application reappears. It also
+     * re-armed — the splash unmounts when the video has faded, the marker goes with
+     * it, the condition becomes true again, and the entire interface was hidden and
+     * unclickable for good.
+     *
+     * Removing the element makes the release one-way. It happens once, and
+     * afterwards the rules do not exist in the document, so nothing can bring them
+     * back.
+     */
+    const COVER_MARKERS = ['dsh-splash-animation-cover', 'dsh-splash-animation-base']
+
+    /** Guards the removal so it cannot run twice. */
+    let coverReleased = false
+
+    /**
+     * Drop the Host's cover and its dark base colour, revealing the application.
+     *
+     * Both go together: the base colour is only correct while the splash owns the
+     * screen, and leaving it behind would repaint the whole application black on a
+     * light theme.
+     *
+     * Safe to call at any time and from any branch: it is a no-op once released, and
+     * a no-op when the Host injected nothing at all (no media configured, or an
+     * unplayable path — in both cases nothing was hidden in the first place).
+     */
+    function releaseCover() {
+      if (coverReleased || typeof document === 'undefined') return
+      coverReleased = true
+      try {
+        // Disarm the Host's guard first. It exists only for the case where this
+        // module never runs; once the release has happened its timer has nothing
+        // left to do, and leaving it armed would keep a pending task alive for the
+        // rest of the session.
+        const guard = globalThis.__DSH_SPLASH_COVER_GUARD__
+        if (guard !== undefined && guard !== null && typeof guard.clear === 'function') guard.clear()
+      } catch { /* an absent guard is the normal case when the Host injected none */ }
+      try {
+        const sheets = document.head ? document.head.getElementsByTagName('style') : []
+        // Collected first: removing while iterating a live HTMLCollection skips
+        // elements, and the base rule is the second one in the same element anyway.
+        for (let i = 0; i < sheets.length; i += 1) {
+          const node = sheets[i]
+          const text = typeof node.textContent === 'string' ? node.textContent : ''
+          if (!COVER_MARKERS.some((marker) => text.includes(marker))) continue
+          if (typeof node.remove === 'function') node.remove()
+          else if (node.parentNode) node.parentNode.removeChild(node)
+        }
+      } catch { /* revealing the application must never throw */ }
+    }
+
     const BASE = '/dsh-splash-animation'
     const CONFIG_URL = `${BASE}/config.json`
     const SAVE_URL = `${BASE}/config`
@@ -295,6 +369,19 @@ window.__ModuleLoader__.load({
       const [phase, setPhase] = React.useState('in')
       const [failed, setFailed] = React.useState(false)
       /**
+       * Reveal the application, in the same commit that mounts the splash.
+       *
+       * `useLayoutEffect`, not `useEffect`: the Host's cover has `#root` hidden, and
+       * an effect runs after the browser has painted. Removing the cover then would
+       * show the application for a frame BEFORE the splash covers it — the same flash
+       * this whole mechanism exists to remove. A layout effect runs after the DOM is
+       * updated and before paint, so the cover comes off with the splash already
+       * mounted and nothing is ever visible uncovered.
+       */
+      React.useLayoutEffect(() => {
+        releaseCover()
+      }, [])
+      /**
        * Whether the video has a first frame worth showing.
        *
        * Until it does, the overlay paints an opaque cover instead of the element.
@@ -491,11 +578,20 @@ window.__ModuleLoader__.load({
 
       if (session.phase === 'loading') {
         // A bare cover for one microtask, so the application is never visible
-        // mid-animation. Portalled like the splash itself: it hides the same
-        // interface, so it needs the same reach.
+        // mid-animation. Portalled like the splash itself, and it must carry the
+        // SAME z-index — this is not cosmetic.
+        //
+        // A `position: fixed` element with `z-index: auto` sits at level 0 of the
+        // root stacking context, so anything positioned with a positive z-index
+        // paints over it. Other plugins mount body-level overlays with z-index values
+        // in the thousands (the wallet widget uses 9999 through 22000), and while
+        // this cover lacked a z-index they were painted on top of it. Measured on a
+        // live page: the cover was on screen and `elementFromPoint` at the viewport
+        // centre returned the application's input box, for the two frames between
+        // this cover mounting and the real overlay replacing it.
         return topLayer(React.createElement('div', {
           'aria-hidden': true,
-          style: { position: 'fixed', inset: 0, background: '#000000', pointerEvents: 'auto' },
+          style: { position: 'fixed', inset: 0, zIndex: TOP_Z, background: '#000000', pointerEvents: 'auto' },
         }))
       }
 
@@ -505,9 +601,9 @@ window.__ModuleLoader__.load({
       const overlayStyle = {
         position: 'fixed',
         inset: 0,
-        // Highest value the CSS property takes, but see `topLayer`: the number is
-        // only decisive once the splash sits in the root stacking context.
-        zIndex: 2147483000,
+        // Same level as the loading cover; see `TOP_Z`. The number is only decisive
+        // once the splash sits in the root stacking context, which `topLayer` ensures.
+        zIndex: TOP_Z,
         display: 'grid',
         placeItems: 'center',
         background: settings.background,
@@ -860,6 +956,14 @@ window.__ModuleLoader__.load({
             { name: OVERLAY_SLOT, id: ROW_ID, order: 900 },
             SplashAnimation,
           ))
+        } else {
+          // Nothing will be mounted, so nothing will take the Host's cover off. The
+          // cover is only injected when the Host believes media is playable, which
+          // normally agrees with the read above — but the two halves read the same
+          // file at different moments, and a disagreement here would leave the
+          // application hidden with no splash to replace it. Releasing is idempotent
+          // and harmless when no cover was injected at all.
+          releaseCover()
         }
       },
     }

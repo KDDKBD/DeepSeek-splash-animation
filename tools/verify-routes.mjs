@@ -334,17 +334,20 @@ console.log('\nsuppressing the shell boot layer')
   const beforeSave = indexInjections(listeners)
   const expectSuppressed = configBefore.json?.media?.kind !== 'none'
   check(
-    beforeSave.length === (expectSuppressed ? 1 : 0),
+    beforeSave.length === (expectSuppressed ? 2 : 0),
     expectSuppressed
-      ? 'a bundled default also suppresses the shell boot layer'
+      ? 'a bundled default also contributes the cover and its guard'
       : 'with nothing to play the shell boot layer is left alone',
     `${beforeSave.length} row(s), media=${configBefore.json?.media?.kind}`,
   )
 
   await call(routeAt(routes, SAVE), { method: 'POST', body: JSON.stringify({ src: videoPath }) })
   const afterSave = indexInjections(listeners)
-  check(afterSave.length === 1, 'a configured video contributes exactly one row', String(afterSave.length))
-  const row = afterSave[0]
+  check(afterSave.length === 2, 'a configured video contributes exactly two rows (rules + guard)', String(afterSave.length))
+  const row = afterSave.find((r) => r?.kind === 'style')
+  const guard = afterSave.find((r) => r?.kind === 'script')
+  check(row !== undefined, 'one row is the style rules')
+  check(guard !== undefined, 'the other is the guard script')
   check(row?.kind === 'style', 'the row is a style row, so it applies before the first paint', String(row?.kind))
   check(
     typeof row?.text === 'string' && row.text.includes('[data-dsh-boot]'),
@@ -363,36 +366,107 @@ console.log('\nsuppressing the shell boot layer')
   )
 
   /**
-   * The injected row must not hide the application.
+   * The application cover and the base colour, plus what makes them safe.
    *
-   * A rule like `body:not(:has(> [marker])) > #root { visibility: hidden }` looks
-   * self-cancelling: mount the marked node and the application reappears. It is
-   * not, because the condition comes BACK — the splash unmounts when the video has
-   * faded, the marker goes with it, and the rule hides the whole interface for
-   * good. That shipped once and left the application invisible and unclickable.
+   * An earlier version hid `#root` behind a self-cancelling SELECTOR: hide it while
+   * no marked node is mounted. That reads as self-releasing, and it also re-armed —
+   * the splash unmounts when the video has faded, the marker goes with it, and the
+   * interface stayed hidden and unclickable. The lesson is that a cover which can
+   * come back is not a fallback, it is the outage.
    *
-   * So the rule is confined to the boot container, and the two shapes that caused
-   * the outage are named explicitly rather than described.
+   * So both rules are plain one-way overrides that the CLIENT removes by marker.
+   * Only the cover rules are inspected here: the first rule legitimately uses `:has`
+   * to target the boot container's spinner state, and splitting on the marker is what
+   * keeps these assertions about the cover rather than about the whole row.
+   */
+  const coverRule = typeof row?.text === 'string' && row.text.includes('dsh-splash-animation-cover')
+    ? row.text.slice(row.text.indexOf('dsh-splash-animation-cover'), row.text.indexOf('dsh-splash-animation-base'))
+    : ''
+  check(
+    /#root\s*\{[^}]*visibility\s*:\s*hidden/.test(coverRule),
+    'the cover hides the application root, which is what closes the flash',
+    coverRule,
+  )
+  check(
+    coverRule.includes('dsh-splash-animation-cover'),
+    'the cover carries a marker, so the client can find the exact style element to remove',
+    coverRule,
+  )
+  check(
+    coverRule !== '' && !/:has\(|:not\(/.test(coverRule),
+    'the cover is unconditional: a selector condition here could re-arm after the splash unmounts',
+    coverRule,
+  )
+  check(
+    coverRule !== '' && !/[{;]\s*animation(-delay)?\s*:/.test(coverRule.replace(/dsh-splash-animation/g, '')),
+    'no animation timer releases it either: animation-delay accumulates across reloads and then never fires',
+    coverRule,
+  )
+
+  /**
+   * The base colour, and why it is separate from the cover.
+   *
+   * The shell paints `body{background-color:#fff}` in light mode, and its boot layer
+   * lives INSIDE `#root` (the shell constructs it with `new $S(document.getElementById('root'))`).
+   * Hiding that layer therefore leaves the white body on screen, for as long as the
+   * page takes to reach this plugin's module — a flash of light on a light-theme
+   * machine, which is what "the interface appeared and then vanished" actually is.
+   */
+  const baseRule = typeof row?.text === 'string' && row.text.includes('dsh-splash-animation-base')
+    ? row.text.slice(row.text.indexOf('dsh-splash-animation-base'))
+    : ''
+  check(
+    /html\s*,\s*body\s*\{[^}]*background-color/.test(baseRule),
+    'the base rule forces the page background while the splash owns the screen',
+    baseRule,
+  )
+  check(
+    baseRule.includes('dsh-splash-animation-base'),
+    'the base rule carries its own marker, so the client removes it too',
+    baseRule,
+  )
+  check(
+    baseRule !== '' && /background-color\s*:\s*#000/i.test(baseRule),
+    'and the colour it forces is the splash background, not the theme one',
+    baseRule,
+  )
+
+  /**
+   * The guard, which bounds the worst outcome.
+   *
+   * The cover is removed by client.js, deliberately — a release the client owns is
+   * one-way. But "the client always runs" is an assumption, and if it is wrong the
+   * result is a black screen with no way back: `#root` hidden and the boot layer
+   * suppressed together, with the shell's own failure report rendering inside
+   * `#root`. The guard is a fresh inline script per page load, so its timer cannot
+   * accumulate the way a re-served CSS delay would.
    */
   check(
-    typeof row?.text === 'string' && !/#root/.test(row.text),
-    'the injected rule never mentions the application root, so it cannot hide the interface',
-    String(row?.text),
+    typeof guard?.text === 'string' && /setTimeout\s*\(/.test(guard.text),
+    'the guard arms a timer rather than relying on a re-served style',
+    String(guard?.text).slice(0, 120),
   )
   check(
-    typeof row?.text === 'string' && !/visibility/.test(row.text),
-    'and it does not hide by visibility, which is the property that re-armed after the splash unmounted',
-    String(row?.text),
+    typeof guard?.text === 'string'
+      && guard.text.includes('dsh-splash-animation-cover')
+      && guard.text.includes('dsh-splash-animation-base'),
+    'the guard removes the same markers the client removes',
+    String(guard?.text).slice(0, 120),
   )
   check(
-    typeof row?.text === 'string' && row.text.length < 200,
-    'the whole row is one short rule, so a second hidden selector cannot ride along unnoticed',
-    `${String(row?.text).length} chars`,
+    guard?.placement === 'head',
+    'the guard is placed in the head, so its timer starts with the document',
+    String(guard?.placement),
+  )
+  check(
+    typeof guard?.text === 'string' && guard.text.length < 1200,
+    'the guard stays small enough to read in one sitting',
+    `${String(guard?.text).length} chars`,
   )
 
   // Re-firing the event must not grow the table: the host may collect more than once.
   const twice = indexInjections(listeners)
-  check(twice.length === 1, 're-collecting does not push a duplicate row', String(twice.length))
+  check(twice.length === 2, 're-collecting does not push duplicate rows', String(twice.length))
 }
 {
   // A broken path means nothing will play, so hiding the boot layer would leave a
@@ -410,7 +484,7 @@ console.log('\nsuppressing the shell boot layer')
   writeFileSync(videoInPatch, Buffer.alloc(1024, 4))
   const { listeners: patchListeners } = mount({ config: { src: videoInPatch } })
   const rows = indexInjections(patchListeners)
-  check(rows.length === 1, 'a video from the patch config also suppresses the boot layer', String(rows.length))
+  check(rows.length === 2, 'a video from the patch config also suppresses the boot layer and arms the guard', String(rows.length))
   check(listeners.size >= 1, 'the injection handler is registered during apply, before any await')
 }
 
