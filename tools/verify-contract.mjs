@@ -547,6 +547,35 @@ wire = {
     !/document\.addEventListener\(\s*'click'[\s\S]{0,80}?true\s*\)/.test(clientSource),
     'nothing is delegated at the document level, where another plugin can pre-empt it',
   )
+
+  /**
+   * And the listeners must come off when the splash is finished.
+   *
+   * Unmounting is NOT that moment. The console's registry keeps the overlay entry for
+   * the life of the page: a finished splash renders `null` but stays MOUNTED, so an
+   * effect whose only cleanup runs on unmount never cleans up at all. That shipped —
+   * two `window` capture listeners stayed installed, every click was stopped before
+   * it could reach anything, and the user lost the whole interface after skipping.
+   *
+   * So the effect is gated on "does the splash still own the screen", and the gate is
+   * a dependency, which is what makes React run the cleanup at the right time.
+   */
+  check(
+    /const capturingInput\s*=\s*session\.phase !== 'done'/.test(clientSource),
+    'input capture is gated on the splash still being active, not on the component being mounted',
+  )
+  check(
+    /if \(!capturingInput\) return undefined/.test(clientSource),
+    'and the effect does nothing once that gate closes',
+  )
+  check(
+    /\},\s*\[capturingInput,/.test(clientSource),
+    'the gate is in the dependency list, which is what runs the cleanup when the splash finishes',
+  )
+  check(
+    /window\.removeEventListener\(\s*'pointerdown'[\s\S]{0,140}?window\.removeEventListener\(\s*'click'/.test(clientSource),
+    'and both listeners are explicitly removed again',
+  )
 }
 
 /**

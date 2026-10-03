@@ -443,8 +443,22 @@ window.__ModuleLoader__.load({
        * `stopPropagation` rather than `preventDefault`: suppressing the browser's own
        * handling of a click inside a full-screen overlay buys nothing and risks
        * breaking focus, while stopping the bubble is exactly the intent.
+       *
+       * The listeners MUST come off when the splash is finished, and that is not the
+       * same moment as unmounting. The console's registry keeps this entry for the
+       * life of the page: `phase === 'done'` makes the component render `null`, but
+       * the component stays MOUNTED, so a cleanup that only runs on unmount never
+       * runs at all. An earlier version of this effect did exactly that, and while
+       * those two listeners stayed installed nothing on the page could be clicked —
+       * every event was stopped at `window` before reaching anything.
+       *
+       * So the effect is gated on whether the splash still owns the screen, and that
+       * gate is in the dependency list. Being wrong here is not a cosmetic bug: it
+       * costs the user the whole interface.
        */
+      const capturingInput = session.phase !== 'done'
       React.useEffect(() => {
+        if (!capturingInput) return undefined
         // Read from `session`, not from the render-scoped `settings`, because hooks
         // must run on every render — including the first, where the payload has not
         // arrived and this is still the one-frame cover.
@@ -466,7 +480,7 @@ window.__ModuleLoader__.load({
           window.removeEventListener('pointerdown', onPointer, true)
           window.removeEventListener('click', onClick, true)
         }
-      }, [session.settings, dismiss])
+      }, [capturingInput, session.settings, dismiss])
 
       React.useEffect(() => {
         if (session.phase !== 'ready') return undefined
