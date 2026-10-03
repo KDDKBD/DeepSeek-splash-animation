@@ -363,33 +363,31 @@ console.log('\nsuppressing the shell boot layer')
   )
 
   /**
-   * The same row also covers the application until the splash is mounted.
+   * The injected row must not hide the application.
    *
-   * Plugin client modules arrive in batches, so this one executes a second or two
-   * after the page starts while anything inline in index.html has already run.
-   * Suppressing the boot layer alone therefore opens a hole: loading screen gone,
-   * application painted, splash not here yet. The cover has to be in the served
-   * HTML, and it has to release itself when the splash mounts.
+   * A rule like `body:not(:has(> [marker])) > #root { visibility: hidden }` looks
+   * self-cancelling: mount the marked node and the application reappears. It is
+   * not, because the condition comes BACK — the splash unmounts when the video has
+   * faded, the marker goes with it, and the rule hides the whole interface for
+   * good. That shipped once and left the application invisible and unclickable.
+   *
+   * So the rule is confined to the boot container, and the two shapes that caused
+   * the outage are named explicitly rather than described.
    */
   check(
-    typeof row?.text === 'string' && row.text.includes('[data-dsh-splash-pin]'),
-    'the same row also covers the application until the splash mounts',
+    typeof row?.text === 'string' && !/#root/.test(row.text),
+    'the injected rule never mentions the application root, so it cannot hide the interface',
     String(row?.text),
   )
   check(
-    typeof row?.text === 'string' && /body:not\(:has\(> \[data-dsh-splash-pin\]\)\)\s*>\s*#root/.test(row.text),
-    'the cover is scoped to #root and asks about a body-level sibling, which is where the portal lands',
+    typeof row?.text === 'string' && !/visibility/.test(row.text),
+    'and it does not hide by visibility, which is the property that re-armed after the splash unmounted',
     String(row?.text),
   )
   check(
-    typeof row?.text === 'string' && row.text.includes('visibility:hidden'),
-    'the cover hides rather than removes, so layout cannot shift under it',
-    String(row?.text),
-  )
-  check(
-    typeof row?.text === 'string' && !/[{;]\s*animation(-delay)?\s*:/.test(row.text),
-    'no CSS timer releases the cover: animation-delay accumulates across reloads and would stop working silently',
-    String(row?.text),
+    typeof row?.text === 'string' && row.text.length < 200,
+    'the whole row is one short rule, so a second hidden selector cannot ride along unnoticed',
+    `${String(row?.text).length} chars`,
   )
 
   // Re-firing the event must not grow the table: the host may collect more than once.

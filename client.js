@@ -492,11 +492,9 @@ window.__ModuleLoader__.load({
       if (session.phase === 'loading') {
         // A bare cover for one microtask, so the application is never visible
         // mid-animation. Portalled like the splash itself: it hides the same
-        // interface, so it needs the same reach — and it carries the same marker,
-        // because it covers the screen exactly as the splash does.
+        // interface, so it needs the same reach.
         return topLayer(React.createElement('div', {
           'aria-hidden': true,
-          'data-dsh-splash-pin': '',
           style: { position: 'fixed', inset: 0, background: '#000000', pointerEvents: 'auto' },
         }))
       }
@@ -595,11 +593,6 @@ window.__ModuleLoader__.load({
       return topLayer(React.createElement('div', {
         style: overlayStyle,
         onClick: settings.skip === 'click' ? dismiss : undefined,
-        // Also carried by the Host's injected rule: while a node with this marker is
-        // a direct child of `<body>`, `#root` stays hidden. Mounting it is therefore
-        // what reveals the application, and unmounting it hides the application
-        // again — no bookkeeping on either side.
-        'data-dsh-splash-pin': '',
         'data-dsh-splash-animation': '',
       }, children))
     }
