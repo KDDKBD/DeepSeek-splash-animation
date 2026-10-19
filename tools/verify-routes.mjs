@@ -203,13 +203,14 @@ const CONFIG = '/dsh-splash-animation/config.json'
 const SAVE = '/dsh-splash-animation/config'
 const PICK = '/dsh-splash-animation/pick'
 const MEDIA = '/dsh-splash-animation/asset'
+const ASSETS = '/dsh-splash-animation/assets'
 
 console.log('route registration')
 {
   const { routes } = mount()
   const paths = routes.map((route) => route.path).sort()
-  check(routes.length === 4, 'registers four routes', String(routes.length))
-  check(paths.includes(CONFIG) && paths.includes(SAVE) && paths.includes(PICK) && paths.includes(MEDIA), 'all four paths are the documented ones', paths.join(' '))
+  check(routes.length === 5, 'registers five routes', String(routes.length))
+  check(paths.includes(CONFIG) && paths.includes(SAVE) && paths.includes(PICK) && paths.includes(MEDIA) && paths.includes(ASSETS), 'all five paths are the documented ones', paths.join(' '))
   check(routes.filter((route) => route.kind === 'prefix').length === 1, 'exactly one prefix route, so a sibling namespace cannot be swallowed')
   check(routeAt(routes, MEDIA).kind === 'prefix', 'the media route is the prefix route')
 }
@@ -219,7 +220,7 @@ console.log('\nthe engage gate: never configured')
   const { routes, home } = mount()
   const config = await call(routeAt(routes, CONFIG))
   check(config.status === 200, 'the config route still answers', String(config.status))
-  check(config.json?.version === 4, 'the wire version is 4', String(config.json?.version))
+  check(config.json?.version === 5, 'the wire version is 5', String(config.json?.version))
   check(config.json?.problem === null, 'never configured is not an error, so problem stays null', String(config.json?.problem))
   check(config.json?.settings?.src === undefined, 'src stays undefined, which is the "never chosen" state', JSON.stringify(config.json?.settings?.src))
 

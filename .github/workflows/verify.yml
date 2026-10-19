@@ -18,10 +18,12 @@ jobs:
       # server and stays a manual step.
       - name: Host logic (config coercion, media resolution, the engage gate, picker encoding)
         run: node tools/verify-host.mjs
-      - name: Routes (all four routes, driven in-process)
+      - name: Routes (all five routes, driven in-process)
         run: node tools/verify-routes.mjs
       - name: Contract (manifest, Host exports, browser registration, cross-half config)
         run: node tools/verify-contract.mjs
+      - name: Playback modes (asset listing, rotation, the off switch, saved state)
+        run: node tools/verify-modes.mjs
 
       # Network access is needed to ask the registry whether the package exists;
       # a 404 is the expected answer until it is published.

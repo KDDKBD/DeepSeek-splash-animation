@@ -13,10 +13,11 @@
 #     name: dsh-splash-animation
 #     config:
 #       src: D:/wallpapers/opening.webm
+#       mode: cycle          # fixed 固定一个 / cycle 按列表顺序每次换下一个 / random 随机 / off 关闭（不播，保留列表与路径）
 #       skip: button
 #       muted: false
 #
-# 完整字段见 README.zh.md「配置」一节。
+# 完整字段见 README.md「配置」一节。
 
 - insert:
     - id: dsh-splash-animation

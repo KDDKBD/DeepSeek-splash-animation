@@ -10,7 +10,10 @@
  *      being buffered whole,
  *   3. publishing the effective settings so the browser half needs no build step
  *      and no second copy of the configuration,
- *   4. opening the native file picker on request from the settings page.
+ *   4. opening the native file picker on request from the settings page,
+ *   5. listing the media shipped in the package's own `assets` directory, so the
+ *      settings page can offer them by name instead of by path, and resolving the
+ *      `fixed` / `cycle` / `random` / `off` playback modes over that listing.
  *
  * Two configuration sources, later wins:
  *   - the row `config` in the profile's `cordis.patch.yml` (advanced settings),
@@ -25,7 +28,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, extname, isAbsolute, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -39,9 +42,51 @@ const CONFIG_ROUTE = `${ROUTE_BASE}/config.json`
 const MEDIA_ROUTE = `${ROUTE_BASE}/asset`
 const SAVE_ROUTE = `${ROUTE_BASE}/config`
 const PICK_ROUTE = `${ROUTE_BASE}/pick`
+const ASSETS_ROUTE = `${ROUTE_BASE}/assets`
+
+/**
+ * Wire version of every JSON body the browser half parses.
+ *
+ * Raised to 5 by the playback modes: the payload gained `settings.mode`, and the save
+ * route accepts a `mode` field beside `src`.
+ */
+const WIRE_VERSION = 5
 
 /** Directory inside the DSH home that holds this plugin's own state. */
 const STATE_DIRNAME = 'dsh-splash-animation'
+
+/**
+ * The package's own media directory.
+ *
+ * It holds the bundled default and whatever the user drops beside it, and it is the
+ * directory the settings page lists. Resolved from the package directory so a `link:`
+ * fork, an npm install and a tarball install all agree on which directory that is.
+ */
+const ASSETS_DIR = join(PACKAGE_DIR, 'assets')
+
+/**
+ * Prefix marking a `src` that names a file in {@link ASSETS_DIR}.
+ *
+ * The settings page stores a listed file as `asset:<name>` rather than as an absolute
+ * path, so moving or reinstalling the package keeps playing the same file instead of
+ * breaking a path that was baked into the state file.
+ */
+const ASSET_SCHEME = 'asset:'
+
+/**
+ * Playback modes.
+ *
+ * `fixed` plays the configured `src`; `cycle` walks {@link ASSETS_DIR} in name order,
+ * one file further on every page load; `random` picks an entry of the same listing per
+ * page load. All three play the file through once and dissolve, exactly as before — the
+ * mode only decides WHICH file, never how it is played.
+ *
+ * `off` is the fourth choice: play nothing at all. It is deliberately a mode rather
+ * than a cleared `src`, because silencing the splash (a shared screen, a meeting room)
+ * must not discard the configured path or the listing that turns it back on — the mode
+ * is one click to restore, while re-choosing a file is not.
+ */
+const MODES = new Set(['fixed', 'cycle', 'random', 'off'])
 
 /**
  * The bundled default video, shipped inside the package.
@@ -138,6 +183,14 @@ const PICK_TIMEOUT_MS = 5 * 60 * 1000
  */
 export const DEFAULTS = {
   src: undefined,
+  /**
+   * How the file to play is chosen.
+   *
+   * `fixed` is the pre-existing rule and stays the default, so a profile that never
+   * touches the settings page keeps playing exactly what it played before the modes
+   * existed.
+   */
+  mode: 'fixed',
   duration: 0,
   skip: 'button',
   skipAfterMs: 1200,
@@ -210,6 +263,7 @@ export function normalizeConfig(raw) {
     // `undefined` is preserved, and it means "never chosen" — which is what lets a
     // bundled default apply. An empty string means "clear", i.e. never play.
     src: typeof input.src === 'string' ? input.src.slice(0, MAX_SRC_LENGTH) : undefined,
+    mode: oneOf(input.mode, MODES, DEFAULTS.mode),
     duration: clampNumber(input.duration, DEFAULTS.duration, 0, 600000),
     skip: oneOf(input.skip, SKIP_MODES, DEFAULTS.skip),
     skipAfterMs: clampNumber(input.skipAfterMs, DEFAULTS.skipAfterMs, 0, 60000),
@@ -229,6 +283,66 @@ export function normalizeConfig(raw) {
 /** @returns the lower-case extension of `file`, without the dot. */
 function extensionOf(file) {
   return extname(file).replace(/^\./, '').toLowerCase()
+}
+
+/**
+ * File-name order for the listing and for `cycle`, chosen so the order reads the way
+ * the names were written: `2.mp4` sorts before `10.mp4`, and letter case does not
+ * decide it.
+ */
+const NAME_ORDER = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+
+/**
+ * Video files in {@link ASSETS_DIR}, in playback order.
+ *
+ * Videos only: the directory also carries the package's own documentation images, and a
+ * screenshot is not something to offer as a splash. An animated image stays usable by
+ * writing its path in the settings page — the listing is what the modes choose from, not
+ * the complete set of playable formats.
+ *
+ * Read per request rather than cached: a file dropped into the directory while DSH runs
+ * then appears in the settings page on the next read, with no invalidation to get wrong.
+ *
+ * An unreadable entry is skipped instead of reported — this listing drives a settings
+ * page, and one bad file must not empty the list. A file too large to serve stays listed
+ * so choosing it reports `file-too-large` rather than "not found".
+ * @returns descriptors with `name`, `reference`, `extension`, `mime`, `bytes` and
+ *   `mtimeMs`, ordered by file name.
+ */
+export function listAssets() {
+  let entries
+  try {
+    entries = readdirSync(ASSETS_DIR, { withFileTypes: true })
+  } catch {
+    // No assets directory means nothing to list; the caller falls back to `src`.
+    return []
+  }
+  const items = []
+  for (const entry of entries) {
+    if (!entry.isFile()) continue
+    const name = entry.name
+    const extension = extensionOf(name)
+    const mime = FORMATS[extension]
+    if (mime === undefined || IMAGE_KIND.has(extension)) continue
+    let stats
+    try {
+      stats = statSync(join(ASSETS_DIR, name))
+    } catch {
+      continue
+    }
+    if (!stats.isFile()) continue
+    items.push({
+      name,
+      reference: `${ASSET_SCHEME}${name}`,
+      extension,
+      mime,
+      kind: 'video',
+      bytes: stats.size,
+      mtimeMs: Math.round(stats.mtimeMs),
+    })
+  }
+  items.sort((left, right) => NAME_ORDER.compare(left.name, right.name))
+  return items
 }
 
 /**
@@ -257,6 +371,7 @@ function toAbsolutePath(reference, dshHome) {
  *   - `''` — the user deliberately cleared it. Never engaged, and no bundled
  *     default may be substituted for it.
  *   - a path — resolved and validated.
+ *   - an `asset:<name>` reference — matched against the package's media listing.
  *
  * @param src - the effective `src` value, or `undefined` when never chosen.
  * @param dshHome - absolute DSH home directory.
@@ -268,6 +383,30 @@ export function resolveMedia(src, dshHome) {
   // Cleared or absent: the plugin does not engage — no overlay, no card, no
   // placeholder. DSH behaves exactly as if the plugin were not installed.
   if (reference === '') return { configured: false }
+
+  // An `asset:` reference names a file in the package's own directory, and only a name
+  // that directory really holds resolves. Matching against the listing rather than
+  // joining the name is what confines the reference: no separator, traversal or
+  // drive-relative form appears in the listing, so none of them can address anything
+  // outside it. An unmatched reference reports `missing-file` and its `path` is the
+  // reference itself — reported for diagnosis, never opened.
+  if (reference.startsWith(ASSET_SCHEME)) {
+    const name = reference.slice(ASSET_SCHEME.length)
+    const known = listAssets().find((item) => item.name === name)
+    if (known === undefined) return { configured: true, problem: 'missing-file', extension: extensionOf(name), path: name }
+    const assetPath = join(ASSETS_DIR, known.name)
+    if (known.bytes > MAX_MEDIA_BYTES) return { configured: true, problem: 'file-too-large', extension: known.extension, path: assetPath }
+    return {
+      configured: true,
+      path: assetPath,
+      name: known.name,
+      extension: known.extension,
+      mime: known.mime,
+      kind: known.kind,
+      bytes: known.bytes,
+      mtimeMs: known.mtimeMs,
+    }
+  }
 
   const path = toAbsolutePath(reference, dshHome)
   const extension = extensionOf(path)
@@ -358,19 +497,90 @@ function readState(dshHome) {
 }
 
 /**
- * Replace the stored `src` atomically, so a crash mid-write cannot leave a
+ * Merge `patch` into the stored state atomically, so a crash mid-write cannot leave a
  * half-written state file that breaks the next boot.
  * @param dshHome - absolute DSH home directory.
- * @param src - the new path, or `''` to clear it.
+ * @param patch - the fields to replace; `{ src: '' }` clears the configured path.
  */
-function writeState(dshHome, src) {
+function writeState(dshHome, patch) {
   const dir = join(dshHome, STATE_DIRNAME)
   mkdirSync(dir, { recursive: true })
   const file = stateFile(dshHome)
   const temporary = `${file}.tmp`
-  const next = { ...readState(dshHome), src }
+  const next = { ...readState(dshHome), ...patch }
   writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
   renameSync(temporary, file)
+}
+
+/**
+ * The listed file that plays next.
+ *
+ * `cycle` walks the listing in name order and wraps; `random` picks any entry but the
+ * current one, so a two-file directory alternates instead of occasionally repeating
+ * itself. With no stored choice — the first launch, or a file that has since been
+ * deleted — advancing plays the first entry, and an unadvanced read reports that same
+ * entry, which is what keeps the boot decision and the overlay agreeing on what plays.
+ * @param items - the listing from {@link listAssets}.
+ * @param current - the stored choice, or `''` when none is stored.
+ * @param mode - `cycle` or `random`.
+ * @param advance - whether this read moves the choice on.
+ * @returns the chosen file name, or `undefined` for an empty listing.
+ */
+function assetPick(items, current, mode, advance) {
+  if (items.length === 0) return undefined
+  const index = items.findIndex((item) => item.name === current)
+  // No stored choice counts as "before the first entry", so the first advance plays the
+  // first file rather than skipping it.
+  if (!advance) return items[index < 0 ? 0 : index].name
+  const step = mode === 'random' && items.length > 1
+    ? 1 + Math.floor(Math.random() * (items.length - 1))
+    : 1
+  return items[(index + step) % items.length].name
+}
+
+/**
+ * The media one request plays, with the rule that chose it.
+ *
+ * `fixed` plays the configured `src`, which is the pre-existing rule and the default.
+ * `cycle` and `random` play an entry of the package's `assets` directory; `advance`
+ * moves that choice on, and the browser half asks for an advance exactly once per page
+ * load — on its synchronous boot read — so every later read of the same page reports the
+ * choice that advance stored. A mode whose listing is empty falls back to `src`, so a
+ * package stripped of its assets behaves like a `fixed` install rather than breaking.
+ *
+ * An empty `src` still means "never play" in every mode. That decision outranks the
+ * mode: a splash the user cleared must not come back because the directory holds files.
+ *
+ * `off` plays nothing at all, and it outranks `src` too: it is the mode for a screen the
+ * user does not want the splash on, so it must silence a configured video without
+ * discarding it — the path and the listing stay stored for whichever mode comes next.
+ * @param ctx - the plugin context, for reporting a state write that failed.
+ * @param settings - the effective settings.
+ * @param dshHome - absolute DSH home directory.
+ * @param advance - whether this request moves the `cycle` / `random` choice on.
+ * @returns the descriptor from {@link resolveMedia}, with `source` naming the rule that won.
+ */
+function currentMedia(ctx, settings, dshHome, advance) {
+  if (settings.mode === 'off') return { configured: false, source: 'off' }
+  if (settings.src === '') return { configured: false, source: 'cleared' }
+  if (settings.mode === 'fixed') return resolveEffectiveMedia(settings.src, dshHome)
+
+  const items = listAssets()
+  if (items.length === 0) return resolveEffectiveMedia(settings.src, dshHome)
+
+  const stored = readState(dshHome)
+  const previous = typeof stored.pick === 'string' ? stored.pick : ''
+  const chosen = assetPick(items, previous, settings.mode, advance)
+  if (advance && chosen !== previous) {
+    try {
+      writeState(dshHome, { pick: chosen })
+    } catch (error) {
+      // This launch still plays: an unwritable state file costs the rotation its memory,
+      // not the video the user is waiting for.
+      ctx.logger.warn(`dsh-splash-animation: could not record the ${settings.mode} choice (${error.code ?? error.message})`)
+    }
+  }
+  return { ...resolveMedia(`${ASSET_SCHEME}${chosen}`, dshHome), source: settings.mode }
 }
 
 /**
@@ -679,6 +889,72 @@ function runCapture(command, args, ctx) {
 }
 
 /**
+ * The JSON body both settings routes answer with.
+ *
+ * The browser half decides from it whether to engage, and the settings page reads it to
+ * describe what is playing; one builder keeps the two routes from describing the same
+ * state differently.
+ * @param effective - the effective settings.
+ * @param media - a descriptor from {@link currentMedia} or {@link resolveEffectiveMedia}.
+ * @returns the wire payload.
+ */
+function payloadFor(effective, media) {
+  return {
+    version: WIRE_VERSION,
+    settings: effective,
+    // `configured: false` is the signal to the browser half to stay out of the way
+    // entirely — no overlay, no card, nothing.
+    media: media.configured !== true
+      ? { kind: 'none' }
+      : media.problem === undefined
+        ? {
+            url: `${MEDIA_ROUTE}/${encodeURIComponent(media.name)}`,
+            name: media.name,
+            kind: media.kind,
+            mime: media.mime,
+            extension: media.extension,
+            bytes: media.bytes,
+          }
+        : { kind: 'none', name: media.name, extension: media.extension },
+    problem: media.problem ?? null,
+    /** Which rule chose the media: `bundled`, `chosen`, `cleared`, `unset`, `cycle` or `random`. */
+    source: media.source ?? null,
+    /**
+     * What the settings page shows in its path field: the configured choice.
+     *
+     * A never-configured install still plays the bundled video, so the field is
+     * prefilled with that path — the page shows what plays rather than an empty box
+     * that contradicts it. In `cycle` and `random` the field keeps showing the
+     * configured choice while `media` reports the file playing now, so returning to
+     * `fixed` restores what the user picked.
+     */
+    effectiveSrc: media.configured !== true
+      ? ''
+      : media.source === 'bundled'
+        ? BUNDLED_MEDIA
+        : typeof effective.src === 'string' ? effective.src : '',
+    /** True once the user has chosen (or explicitly cleared) something. */
+    chosen: media.source === 'chosen' || media.source === 'cleared',
+  }
+}
+
+/**
+ * Whether this request asks the `cycle` / `random` choice to move on.
+ *
+ * The browser half sets the flag on its synchronous boot read only, so one page load
+ * advances the rotation once however many times the page then reads the settings.
+ * @param req - the HTTP request.
+ * @returns true when the query asks for an advance.
+ */
+function advanceRequested(req) {
+  try {
+    return new URL(req.url ?? '/', 'http://dsh.invalid').searchParams.get('advance') === '1'
+  } catch {
+    return false
+  }
+}
+
+/**
  * Mount the splash animation.
  *
  * The route table and the state file are the only mutations; every route
@@ -732,7 +1008,9 @@ export function apply(ctx, rawConfig, options = {}) {
     try {
       if (!Array.isArray(table)) return
       const effective = settings()
-      const media = resolveEffectiveMedia(effective.src, dshHome)
+      // A peek, never an advance: this handler also runs for a worker boot payload, so
+      // advancing here would walk a `cycle` rotation twice for one page load.
+      const media = currentMedia(ctx, effective, dshHome, false)
       // Nothing to play (or nothing playable) means the shell's own boot screen is
       // the only thing the user would see: leave it alone.
       if (media.configured !== true || media.problem !== undefined) return
@@ -830,44 +1108,46 @@ export function apply(ctx, rawConfig, options = {}) {
       handler: (req, res) => {
         if (guard(req, res)) return
         const effective = settings()
-        const media = resolveEffectiveMedia(effective.src, dshHome)
+        // The one place the rotation moves: the browser half flags its synchronous boot
+        // read, and every later read of that page then reports the stored choice.
+        const media = currentMedia(ctx, effective, dshHome, advanceRequested(req))
         res.writeHead(200, {
           'Content-Type': 'application/json; charset=utf-8',
           'Cache-Control': 'no-store',
         })
+        res.end(JSON.stringify(payloadFor(effective, media)))
+      },
+    }))
+
+    // The directory listing behind the settings page's file list. Separate from the
+    // config route on purpose: that one is read synchronously during boot, and a listing
+    // that grows with the directory has no business on the boot path.
+    scoped.effect(() => scoped.webServer.register({
+      kind: 'exact',
+      path: ASSETS_ROUTE,
+      handler: (req, res) => {
+        if (guard(req, res)) return
+        if (req.method !== 'GET' && req.method !== 'HEAD') {
+          res.writeHead(405, { Allow: 'GET, HEAD' })
+          res.end()
+          return
+        }
+        const items = listAssets().map((item) => ({
+          name: item.name,
+          reference: item.reference,
+          extension: item.extension,
+          mime: item.mime,
+          kind: item.kind,
+          bytes: item.bytes,
+          tooLarge: item.bytes > MAX_MEDIA_BYTES,
+        }))
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
         res.end(JSON.stringify({
-          version: 4,
-          settings: effective,
-          // `configured: false` is the signal to the browser half to stay out of
-          // the way entirely — no overlay, no card, nothing.
-          media: media.configured !== true
-            ? { kind: 'none' }
-            : media.problem === undefined
-              ? {
-                  url: `${MEDIA_ROUTE}/${encodeURIComponent(media.name)}`,
-                  name: media.name,
-                  kind: media.kind,
-                  mime: media.mime,
-                  extension: media.extension,
-                  bytes: media.bytes,
-                }
-              : { kind: 'none', name: media.name, extension: media.extension },
-          problem: media.problem ?? null,
-          /** Which rule chose the media: `bundled`, `chosen`, `cleared` or `unset`. */
-          source: media.source ?? null,
-          /**
-           * What the settings page should show in its path field.
-           *
-           * A never-chosen install still plays the bundled video, so the field is
-           * prefilled with that path — the page shows what is actually playing
-           * rather than an empty box that contradicts it. Saving clears the
-           * `bundled` source, which is what "the user has now chosen" means.
-           */
-          effectiveSrc: media.configured === true
-            ? (media.source === 'bundled' ? BUNDLED_MEDIA : effective.src)
-            : '',
-          /** True once the user has chosen (or explicitly cleared) something. */
-          chosen: media.source === 'chosen' || media.source === 'cleared',
+          version: WIRE_VERSION,
+          /** The directory the browser half cannot read for itself, shown by the page. */
+          dir: ASSETS_DIR,
+          mode: settings().mode,
+          items,
         }))
       },
     }))
@@ -884,14 +1164,28 @@ export function apply(ctx, rawConfig, options = {}) {
           return
         }
         const body = await readJsonBody(req, 16 * 1024)
-        if (body === undefined || typeof body.src !== 'string') {
+        // Either field may arrive alone: the page saves a mode without touching the path,
+        // and the clear button sends an empty `src` and nothing else.
+        if (body === undefined || (typeof body.src !== 'string' && typeof body.mode !== 'string')) {
           res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' })
           res.end(JSON.stringify({ ok: false, error: 'invalid-body' }))
           return
         }
-        const src = body.src.trim().slice(0, MAX_SRC_LENGTH)
+        if (typeof body.mode === 'string' && !MODES.has(body.mode)) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({ ok: false, error: 'invalid-mode' }))
+          return
+        }
+        const patch = {}
+        if (typeof body.src === 'string') patch.src = body.src.trim().slice(0, MAX_SRC_LENGTH)
+        if (typeof body.mode === 'string') {
+          patch.mode = body.mode
+          // Entering a rotation restarts it at the first listed file, so switching modes
+          // gives a predictable first launch instead of resuming an unrelated position.
+          if (readState(dshHome).mode !== body.mode) patch.pick = ''
+        }
         try {
-          writeState(dshHome, src)
+          writeState(dshHome, patch)
         } catch (error) {
           ctx.logger.warn(`dsh-splash-animation: could not write the state file (${error.code ?? error.message})`)
           res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' })
@@ -901,29 +1195,9 @@ export function apply(ctx, rawConfig, options = {}) {
         // Saving — including saving an empty path — records an explicit choice, so
         // the bundled default no longer applies afterwards. That is what makes
         // "clear it and it stops playing" true.
-        const media = resolveEffectiveMedia(src, dshHome)
+        const saved = settings()
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
-        res.end(JSON.stringify({
-          ok: true,
-          // The same wire version as the config route: the settings page consumes
-          // both responses with one parser.
-          version: 4,
-          settings: { ...patchConfig, ...readState(dshHome) },
-          media: media.configured !== true || media.problem !== undefined
-            ? { kind: 'none', name: media.name, extension: media.extension }
-            : {
-                url: `${MEDIA_ROUTE}/${encodeURIComponent(media.name)}`,
-                name: media.name,
-                kind: media.kind,
-                mime: media.mime,
-                extension: media.extension,
-                bytes: media.bytes,
-              },
-          problem: media.problem ?? null,
-          source: media.source ?? null,
-          effectiveSrc: media.configured === true ? src : '',
-          chosen: true,
-        }))
+        res.end(JSON.stringify({ ok: true, ...payloadFor(saved, currentMedia(ctx, saved, dshHome, false)) }))
       },
     }))
 
@@ -957,7 +1231,9 @@ export function apply(ctx, rawConfig, options = {}) {
           res.end()
           return
         }
-        const media = resolveEffectiveMedia(settings().src, dshHome)
+        // A peek, so a range request mid-playback cannot walk the rotation on: the file
+        // served is the one the page's boot read already chose.
+        const media = currentMedia(ctx, settings(), dshHome, false)
         if (media.configured !== true || media.problem !== undefined) {
           notFound(res)
           return

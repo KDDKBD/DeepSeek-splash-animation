@@ -128,7 +128,8 @@ check(typeof host.normalizeConfig === 'function', 'exports normalizeConfig()')
 check(host.DEFAULTS !== undefined, 'exports DEFAULTS')
 
 const documentedKeys = Object.keys(host.DEFAULTS).sort()
-check(documentedKeys.length === 14, '14 documented settings', String(documentedKeys.length))
+check(documentedKeys.length === 15, '15 documented settings', String(documentedKeys.length))
+check(documentedKeys.includes('mode'), 'the playback mode is a documented setting')
 check(
   !documentedKeys.includes('enabled'),
   'there is no enabled flag: the gate is whether a video is configured',

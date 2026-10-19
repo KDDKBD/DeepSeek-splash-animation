@@ -16,7 +16,10 @@
  * Host endpoints (absolute, so the same strings work in the browser and under
  * Electron, where the preload bridge forwards absolute-path requests):
  *   GET  /dsh-splash-animation/config.json  effective settings + media descriptor
- *   POST /dsh-splash-animation/config       store the chosen path
+ *   GET  /dsh-splash-animation/config.json?advance=1
+ *                                           the same, moving a `cycle` / `random` pick on
+ *   GET  /dsh-splash-animation/assets       the package's video listing
+ *   POST /dsh-splash-animation/config       store the chosen path and playback mode
  *   POST /dsh-splash-animation/pick         open a native file dialog
  *   GET  /dsh-splash-animation/asset/<name> the media bytes, Range-capable
  *
@@ -128,22 +131,95 @@ window.__ModuleLoader__.load({
       } catch { /* revealing the application must never throw */ }
     }
 
+    /**
+     * Page-global marker: this page has already played its splash.
+     *
+     * It is set the moment the splash starts leaving the screen, so a module reload
+     * that happens afterwards (client HMR, plugin re-activation) does not replay the
+     * opening animation over the interface the user is already using. The marker
+     * lives on the page global because a module reload recreates this module's state;
+     * only an actual page load clears it.
+     */
+    const PLAYED_KEY = '__DSH_SPLASH_PLAYED__'
+
+    /** @returns whether this page has already played the splash. */
+    function splashPlayed() {
+      try {
+        return globalThis[PLAYED_KEY] === true
+      } catch {
+        // A frozen globalThis keeps the pre-existing per-module behavior.
+        return false
+      }
+    }
+
+    /** Record that this page has played the splash. */
+    function markSplashPlayed() {
+      try {
+        globalThis[PLAYED_KEY] = true
+      } catch { /* a frozen globalThis is not worth failing a boot over */ }
+    }
+
     const BASE = '/dsh-splash-animation'
     const CONFIG_URL = `${BASE}/config.json`
+    /**
+     * The boot read, which is the only request that moves a `cycle` / `random` pick on.
+     *
+     * `payloadSync` below is called once per page load, from `apply`, so the flag lives
+     * here rather than on every read of the settings: the overlay's own fetch and the
+     * settings page must see the file this load already chose.
+     */
+    const BOOT_URL = `${CONFIG_URL}?advance=1`
+    const ASSETS_URL = `${BASE}/assets`
     const SAVE_URL = `${BASE}/config`
     const PICK_URL = `${BASE}/pick`
     const OVERLAY_SLOT = 'shell.overlay'
     const TAB_SLOT = 'settings.plugins.tab'
     const ROW_ID = 'dsh-splash-animation'
 
+    /**
+     * Prefix the Host stores a listed file under.
+     *
+     * The settings page writes and reads the same string, so the file list and the path
+     * field describe the same choice.
+     */
+    const ASSET_PREFIX = 'asset:'
+
+    /** The name the package ships as its default video. */
+    const BUILTIN_NAME = 'default.mp4'
+
+    /** Playback modes in display order, with the dictionary key of each label. */
+    const MODE_ORDER = ['fixed', 'cycle', 'random', 'off']
+    const MODE_LABELS = { fixed: 'modeFixed', cycle: 'modeCycle', random: 'modeRandom', off: 'modeOff' }
+
     /** UI strings; the splash is the first thing a user sees, so it follows the OS language. */
     const TEXT = {
       zh: {
         tab: '开屏动画',
         title: '开屏动画',
-        intro: '选一个视频或动图，下次打开 DSH 时会先播它，并在结尾淡出。没有选择时插件完全不生效。',
-        pathLabel: '视频 / 动图路径',
+        intro: '选一个视频作为开屏：固定播一个、按顺序换着播、每次随机挑一个，或者选「关闭」完全不播。播完照常进入界面。',
+        modeLabel: '播放方式',
+        modeFixed: '固定',
+        modeCycle: '循环',
+        modeRandom: '随机',
+        modeOff: '关闭',
+        modeHint: {
+          fixed: '每次打开都播放下面列表里选中的那个。',
+          cycle: '每次打开按列表顺序换下一个，播完照常进入界面。列表里选中的那个只在「固定」里用。',
+          random: '每次打开从列表里随机挑一个，播完照常进入界面。列表里选中的那个只在「固定」里用。',
+          off: '不播开屏动画，直接进入界面（公共场合、投屏时用）。视频列表和自定义路径都保留，随时切回上面三种即可恢复。',
+        },
+        libraryLabel: '视频目录',
+        libraryLoading: '正在读取视频列表…',
+        libraryFailed: '读不到视频列表。如果刚更新过插件，重启 DSH 后生效。',
+        libraryEmpty: '这个目录里还没有视频。把 mp4 / webm 放进去，再点「刷新」。',
+        libraryHint: '点一行就把它选为「固定」的播放对象。只列视频，动图仍可填路径使用。',
+        refresh: '刷新',
+        builtin: '内置',
+        playingNow: '本次播放',
+        unsaved: '有未保存的改动。',
+        pathLabel: '自定义路径',
         pathPlaceholder: '例如 D:\\videos\\opening.mp4，或 ~/videos/opening.webm',
+        pathHint: '列表里选中的文件按 asset:文件名 记录，插件换位置也不会失效；不填就用插件自带的视频。',
         choose: '选择文件…',
         save: '保存',
         clear: '清除',
@@ -152,10 +228,16 @@ window.__ModuleLoader__.load({
         picking: '等待文件选择…',
         pickerUnavailable: '这个宿主没有可用的文件对话框，请直接把路径填进上面的输入框。',
         current: '当前生效',
+        modeSummary: '播放方式',
+        modeActive: {
+          cycle: '循环播放 · 每次打开换下一个',
+          random: '随机播放 · 每次打开随机挑一个',
+          off: '已关闭 · 不播开屏动画（视频列表与路径保留）',
+        },
         none: '未设置 —— 插件不介入',
         willPlay: '下次启动播放',
         bundled: '正在使用内置视频',
-        bundledHint: '这是插件自带的视频。换一个就点「选择文件…」，想彻底关掉就点「清除」。',
+        bundledHint: '这是插件自带的视频。换一个就在列表里点一行，想彻底关掉就点「清除」。',
         size: '大小',
         summary: '影片信息',
         skip: '跳过',
@@ -172,9 +254,30 @@ window.__ModuleLoader__.load({
       en: {
         tab: 'Splash animation',
         title: 'Splash animation',
-        intro: 'Pick a video or animated image. It plays the next time DSH opens and fades out at the end. With nothing selected the plugin does not engage at all.',
-        pathLabel: 'Video / image path',
+        intro: 'Pick a video for the splash: always the same one, the next one in turn, a random one, or “Off” for no splash at all. Playback ends as usual and reveals the interface.',
+        modeLabel: 'Playback mode',
+        modeFixed: 'Fixed',
+        modeCycle: 'In turn',
+        modeRandom: 'Random',
+        modeOff: 'Off',
+        modeHint: {
+          fixed: 'Every launch plays the file selected in the list below.',
+          cycle: 'Every launch plays the next file in the list order, then reveals the interface. The selected file is used by “Fixed” only.',
+          random: 'Every launch plays a random file from the list, then reveals the interface. The selected file is used by “Fixed” only.',
+          off: 'No splash: the interface appears immediately (for a shared screen or a meeting). The video list and custom path are kept, so switching back to any of the three modes above restores playback.',
+        },
+        libraryLabel: 'Video directory',
+        libraryLoading: 'Reading the video list…',
+        libraryFailed: 'The video list could not be read. If the plugin was just updated, restart DSH for it to take effect.',
+        libraryEmpty: 'No videos in this directory yet. Drop an mp4 or webm in, then press “Refresh”.',
+        libraryHint: 'Click a row to make it the “Fixed” choice. Videos only; an animated image can still be used by path.',
+        refresh: 'Refresh',
+        builtin: 'bundled',
+        playingNow: 'playing now',
+        unsaved: 'There are unsaved changes.',
+        pathLabel: 'Custom path',
         pathPlaceholder: 'e.g. D:\\videos\\opening.mp4, or ~/videos/opening.webm',
+        pathHint: 'A file picked from the list is stored as asset:<name>, which survives the plugin moving; leave it empty to use the bundled video.',
         choose: 'Choose file…',
         save: 'Save',
         clear: 'Clear',
@@ -183,10 +286,16 @@ window.__ModuleLoader__.load({
         picking: 'Waiting for the file dialog…',
         pickerUnavailable: 'This host has no file dialog available; paste the path into the field above instead.',
         current: 'Currently active',
+        modeSummary: 'Playback mode',
+        modeActive: {
+          cycle: 'In turn · a different file each launch',
+          random: 'Random · a random file each launch',
+          off: 'Off · no splash plays (video list and path kept)',
+        },
         none: 'Not set — the plugin stays out of the way',
         willPlay: 'Plays on next launch',
         bundled: 'Using the bundled video',
-        bundledHint: 'This is the video shipped with the plugin. Pick another with “Choose file…”, or turn the splash off entirely with “Clear”.',
+        bundledHint: 'This is the video shipped with the plugin. Click a row in the list to change it, or turn the splash off entirely with “Clear”.',
         size: 'Size',
         summary: 'Media',
         skip: 'Skip',
@@ -242,12 +351,16 @@ window.__ModuleLoader__.load({
      *
      * A blocked or failed request yields "do not engage": showing nothing is the
      * safe outcome, and the overlay's own fetch then reports the failure.
+     *
+     * This is the boot read, so it carries the advance flag. It is the only request that
+     * moves a `cycle` / `random` pick on, which is what makes "the next video" mean the
+     * next page load rather than the next request.
      * @returns the parsed payload, or a `no media` payload.
      */
     function payloadSync() {
       try {
         const request = new XMLHttpRequest()
-        request.open('GET', CONFIG_URL, false)
+        request.open('GET', BOOT_URL, false)
         request.send(null)
         if (request.status !== 200) return { settings: {}, media: { kind: 'none' }, problem: 'load-failed' }
         return JSON.parse(request.responseText)
@@ -258,6 +371,8 @@ window.__ModuleLoader__.load({
 
     /** Defaults mirroring the Host schema, used when a field is absent from the wire. */
     const FALLBACK = {
+      // Which file plays; `fixed` is the Host's own default and the pre-modes behaviour.
+      mode: 'fixed',
       duration: 0,
       skip: 'button',
       skipAfterMs: 1200,
@@ -414,7 +529,38 @@ window.__ModuleLoader__.load({
       const dismiss = React.useCallback(() => {
         if (dismissedRef.current) return
         dismissedRef.current = true
+        // The page has shown its splash now; a later module reload must not replay
+        // it over the interface the user is already using. See `PLAYED_KEY`.
+        markSplashPlayed()
         setPhase('out')
+      }, [])
+
+      /**
+       * Release the video's decoder and compositor surface before the element
+       * leaves the document.
+       *
+       * Removing a full-screen `<video>` straight out of playback makes Chromium
+       * tear the media player down after the removal. With a hardware video
+       * overlay (DirectComposition on Windows) the overlay plane can outlive the
+       * element and reappear over the page as a full-screen flicker of the last
+       * frame while the interface sits idle; refreshing the page is the only way
+       * out, because nothing in the document owns the leftover plane. Pausing and
+       * clearing the source first hands the teardown to the media element while
+       * it is still attached, and the frames the fade effect waits for below let
+       * the compositor drop the overlay before the overlay node is unmounted.
+       */
+      const releaseMedia = React.useCallback(() => {
+        const element = videoRef.current
+        if (element === null || element === undefined) return
+        try {
+          element.pause()
+        } catch { /* an already torn-down element is released already */ }
+        try {
+          // Clearing the source destroys the media resource (and with it the
+          // overlay plane) instead of leaving it to the element's removal.
+          element.removeAttribute('src')
+          element.load()
+        } catch { /* same */ }
       }, [])
 
       /**
@@ -602,6 +748,11 @@ window.__ModuleLoader__.load({
             element.removeEventListener('error', onError)
             element.removeEventListener('loadeddata', onPaintable)
             element.removeEventListener('canplay', onPaintable)
+            // A disposal that skips the fade (HMR, plugin disable) must not leave
+            // the media playing behind a node the document no longer shows.
+            try {
+              element.pause()
+            } catch { /* already torn down */ }
           }
         }
 
@@ -635,9 +786,31 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         if (phase !== 'out') return undefined
         const fade = num(session.settings && session.settings.fadeOutMs, FALLBACK.fadeOutMs)
-        const id = window.setTimeout(() => setSession({ phase: 'done' }), fade)
-        return () => window.clearTimeout(id)
-      }, [phase, session.settings])
+        let done = false
+        let frame = 0
+        let guard = 0
+        const finish = () => {
+          if (done) return
+          done = true
+          setSession({ phase: 'done' })
+        }
+        const id = window.setTimeout(() => {
+          releaseMedia()
+          // Two frames: the first is composited with the media resource already
+          // gone, the second unmounts after that frame reached the screen. A
+          // hidden tab runs no rAF at all, so the guard keeps the dismissal on
+          // time instead of leaving a transparent overlay capturing input.
+          frame = window.requestAnimationFrame(() => {
+            frame = window.requestAnimationFrame(finish)
+          })
+          guard = window.setTimeout(finish, 1000)
+        }, fade)
+        return () => {
+          window.clearTimeout(id)
+          window.clearTimeout(guard)
+          if (frame !== 0) window.cancelAnimationFrame(frame)
+        }
+      }, [phase, session.settings, releaseMedia])
 
       if (session.phase === 'done') return null
 
@@ -695,6 +868,13 @@ window.__ModuleLoader__.load({
             height: '100%',
             objectFit: objectFit(settings.fit),
             background: settings.background,
+            // Keep the frame out of Chromium's DirectComposition hardware
+            // video-overlay path. An opacity just below 1 makes the quad require
+            // blending, which that path rejects; the blend is 0.1% of the frame
+            // over this overlay's own background, i.e. invisible. The overlay
+            // plane is the layer that can outlive a removed element on Windows
+            // and flicker over the page while the interface sits idle.
+            opacity: 0.999,
           },
         }))
       } else {
@@ -778,14 +958,18 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * @param options - label text, click handler, and emphasis.
+     * @param options - label text, click handler, emphasis, selection and list key.
      * @returns a themed button element.
      */
     function button(options) {
       return React.createElement('button', {
+        // Extracted by `createElement` rather than rendered: a caller that builds a row of
+        // buttons needs the key to reach the element, not the DOM.
+        key: options.key,
         type: 'button',
         onClick: options.onClick,
         disabled: options.disabled === true,
+        'aria-pressed': options.active === undefined ? undefined : options.active,
         style: {
           appearance: 'none',
           font: 'inherit',
@@ -795,40 +979,83 @@ window.__ModuleLoader__.load({
           padding: '5px 14px',
           cursor: options.disabled === true ? 'default' : 'pointer',
           opacity: options.disabled === true ? 0.4 : 1,
-          border: options.primary === true ? '1px solid transparent' : '1px solid var(--dsw-alias-border-l2, #d3d5da)',
-          background: options.primary === true ? 'var(--dsw-alias-label-primary, #17181a)' : 'transparent',
-          color: options.primary === true ? 'var(--dsw-alias-bg-layer-3, #ffffff)' : 'var(--dsw-alias-label-secondary, #5c6068)',
+          border: options.primary === true || options.active === true
+            ? '1px solid transparent'
+            : '1px solid var(--dsw-alias-border-l2, #d3d5da)',
+          background: options.primary === true || options.active === true
+            ? 'var(--dsw-alias-label-primary, #17181a)'
+            : 'transparent',
+          color: options.primary === true || options.active === true
+            ? 'var(--dsw-alias-bg-layer-3, #ffffff)'
+            : 'var(--dsw-alias-label-secondary, #5c6068)',
         },
       }, options.label)
     }
 
     /**
-     * The settings page: choose the video the splash plays.
+     * The settings page: choose the video the splash plays and how it is chosen.
      *
-     * A browser cannot read a local file path, so "choose" posts to the Host,
-     * which opens the native dialog. The text field is not a fallback for a
-     * broken path — it is the only route on a host with no dialog at all (a
-     * headless server, a browser on another machine), so it is always present.
+     * A browser can neither read a local file path nor list a directory, so both come
+     * from the Host: "choose" opens the native dialog, and the file list is the Host's
+     * listing of the package's own media directory. The text field is not a fallback for
+     * a broken path — it is the only route on a host with no dialog at all (a headless
+     * server, a browser on another machine), so it is always present.
      * @returns the settings page element.
      */
     function SplashSettings() {
       const t = strings()
       const [draft, setDraft] = React.useState('')
+      const [mode, setMode] = React.useState(FALLBACK.mode)
+      /**
+       * What the Host last confirmed, so the page can tell a draft from a saved value.
+       *
+       * `null` until the first answer arrives. Comparing against it is what keeps an
+       * untouched path field from being saved back as an explicit choice, which would turn
+       * "use the bundled video" into a path baked into the state file.
+       */
+      const [baseline, setBaseline] = React.useState(null)
+      const [library, setLibrary] = React.useState({ status: 'loading', dir: '', items: [] })
       const [state, setState] = React.useState({ status: 'loading' })
       const [busy, setBusy] = React.useState(false)
+
+      /**
+       * Read the Host's listing of the package's media directory.
+       *
+       * Kept callable so the refresh control can re-run it: videos are dropped into that
+       * directory while DSH runs, and the page picks them up without a reload. A failure
+       * is a state of the page rather than an exception — the path field still works with
+       * no listing at all.
+       */
+      const loadLibrary = React.useCallback(async () => {
+        try {
+          const response = await fetch(ASSETS_URL, { credentials: 'same-origin', cache: 'no-store' })
+          if (!response.ok) throw new Error(`http-${response.status}`)
+          const body = await response.json()
+          setLibrary({
+            status: 'ready',
+            dir: typeof body.dir === 'string' ? body.dir : '',
+            items: Array.isArray(body.items) ? body.items : [],
+          })
+        } catch {
+          setLibrary({ status: 'failed', dir: '', items: [] })
+        }
+      }, [])
 
       React.useEffect(() => {
         let cancelled = false
         payload().then((result) => {
           if (cancelled) return
-          // `effectiveSrc` is what is actually playing right now, which for a
-          // never-configured install is the bundled video the Host resolved. Showing
-          // an empty field while that video plays would contradict the page's own
-          // status line, so the field follows the Host's answer.
+          // `effectiveSrc` is the configured choice, which for a never-configured install
+          // is the bundled video the Host resolved. Showing an empty field while that
+          // video plays would contradict the page's own status line, so the field follows
+          // the Host's answer.
           const shown = typeof result?.effectiveSrc === 'string' && result.effectiveSrc !== ''
             ? result.effectiveSrc
             : (typeof result?.settings?.src === 'string' ? result.settings.src : '')
+          const shownMode = typeof result?.settings?.mode === 'string' ? result.settings.mode : FALLBACK.mode
           setDraft(shown)
+          setMode(shownMode)
+          setBaseline({ src: shown, mode: shownMode })
           setState({
             status: 'ready',
             media: (result && result.media) || { kind: 'none' },
@@ -836,10 +1063,11 @@ window.__ModuleLoader__.load({
             source: (result && result.source) || null,
           })
         })
+        void loadLibrary()
         return () => {
           cancelled = true
         }
-      }, [])
+      }, [loadLibrary])
 
       /** @returns the server's answer, or a normalized failure. */
       const post = async (url, body) => {
@@ -875,20 +1103,33 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const save = async (value) => {
+      /**
+       * Store a change and adopt the Host's answer as the new baseline.
+       *
+       * The response is the payload the config route serves, so the summary and the status
+       * line report what the Host stored rather than what the page hoped it sent.
+       * @param body - the fields to store: `src`, `mode`, or both.
+       * @param notice - the line to show once it is stored.
+       */
+      const save = async (body, notice) => {
         setBusy(true)
-        const result = await post(SAVE_URL, { src: value })
+        const result = await post(SAVE_URL, body)
         setBusy(false)
         if (result.ok !== true) {
           setState((previous) => ({ ...previous, status: 'ready', problem: 'load-failed' }))
           return
         }
-        setDraft(value)
+        const savedSrc = typeof result.effectiveSrc === 'string' ? result.effectiveSrc : ''
+        const savedMode = typeof result.settings?.mode === 'string' ? result.settings.mode : FALLBACK.mode
+        setDraft(savedSrc)
+        setMode(savedMode)
+        setBaseline({ src: savedSrc, mode: savedMode })
         setState({
           status: 'ready',
           media: result.media || { kind: 'none' },
           problem: result.problem ?? null,
-          notice: value === '' ? t.cleared : t.saved,
+          source: result.source ?? null,
+          notice,
         })
       }
 
@@ -897,6 +1138,46 @@ window.__ModuleLoader__.load({
         : (state.problem !== null && state.problem !== undefined ? (t.problem[state.problem] ?? null) : null)
       const media = state.media || { kind: 'none' }
       const active = media.kind !== 'none'
+      // The file playing now, when a mode rather than the path chose it. Marking it in the
+      // list is what shows which entry a rotation is on.
+      const rotating = state.source === 'cycle' || state.source === 'random'
+      const playingName = active && rotating && typeof media.name === 'string' ? media.name : null
+      const selectedName = draft.startsWith(ASSET_PREFIX) ? draft.slice(ASSET_PREFIX.length) : null
+      const srcChanged = baseline !== null && draft !== baseline.src
+      const unsaved = baseline !== null && (srcChanged || mode !== baseline.mode)
+      /**
+       * Store the page's draft.
+       *
+       * The path travels only when it differs from the Host's own answer: a mode change on
+       * a never-configured install must not turn the pre-filled bundled path into an
+       * explicit choice, which would stop the built-in video from being the default.
+       */
+      const saveDraft = () => save(srcChanged ? { src: draft, mode } : { mode }, t.saved)
+      const labelStyle = { fontSize: '13px', fontWeight: 500, color: 'var(--dsw-alias-label-primary, #17181a)' }
+      const hintStyle = { margin: '6px 0 0', fontSize: '12.5px', lineHeight: 1.6, color: 'var(--dsw-alias-label-secondary, #5c6068)' }
+      const tagStyle = {
+        padding: '1px 7px',
+        borderRadius: '999px',
+        background: 'var(--dsw-alias-bg-layer-2, #f1f2f4)',
+        color: 'var(--dsw-alias-label-secondary, #5c6068)',
+        fontSize: '11.5px',
+        whiteSpace: 'nowrap',
+      }
+      /**
+       * What "currently active" says.
+       *
+       * A file a mode chose is reported as that mode: "plays on next launch" would be
+       * wrong for it, since the file named beside it is only this launch's pick.
+       */
+      const statusText = state.source === 'off'
+        ? t.modeActive.off
+        : !active
+          ? t.none
+          : state.source === 'cycle'
+            ? t.modeActive.cycle
+            : state.source === 'random'
+              ? t.modeActive.random
+              : state.source === 'bundled' ? t.bundled : t.willPlay
 
       const rows = []
       rows.push(React.createElement('p', {
@@ -904,9 +1185,137 @@ window.__ModuleLoader__.load({
         style: { margin: '0 0 14px', fontSize: '13px', lineHeight: 1.6, color: 'var(--dsw-alias-label-secondary, #5c6068)' },
       }, t.intro))
 
+      rows.push(React.createElement('div', { key: 'mode' }, [
+        React.createElement('div', { key: 'label', style: labelStyle }, t.modeLabel),
+        React.createElement('div', { key: 'row', style: { display: 'flex', gap: '8px', marginTop: '6px' } }, MODE_ORDER.map((value) => button({
+          key: value,
+          label: t[MODE_LABELS[value]],
+          active: mode === value,
+          disabled: busy,
+          onClick: () => setMode(value),
+        }))),
+        React.createElement('p', { key: 'hint', style: hintStyle }, t.modeHint[mode] ?? t.modeHint.fixed),
+      ]))
+
+      // The listing is the one thing the page cannot learn by itself: the browser has no
+      // access to the package directory, so every row here came from the Host.
+      const libraryRows = []
+      if (library.status === 'loading') {
+        libraryRows.push(React.createElement('p', { key: 'loading', style: hintStyle }, t.libraryLoading))
+      } else if (library.status === 'failed') {
+        libraryRows.push(React.createElement('p', {
+          key: 'failed',
+          role: 'alert',
+          style: { ...hintStyle, color: 'var(--dsw-alias-state-error-primary, #e5484d)' },
+        }, t.libraryFailed))
+      } else if (library.items.length === 0) {
+        libraryRows.push(React.createElement('p', { key: 'empty', style: hintStyle }, t.libraryEmpty))
+      } else {
+        for (const [index, item] of library.items.entries()) {
+          const selected = selectedName === item.name
+          libraryRows.push(React.createElement('button', {
+            key: item.name,
+            type: 'button',
+            disabled: busy,
+            onClick: () => setDraft(item.reference),
+            style: {
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              width: '100%',
+              padding: '7px 10px',
+              textAlign: 'left',
+              font: 'inherit',
+              fontSize: '12.5px',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              border: `1px solid ${selected ? 'var(--dsw-alias-border-l2, #d3d5da)' : 'transparent'}`,
+              background: selected ? 'var(--dsw-alias-bg-layer-3, #ffffff)' : 'transparent',
+              color: 'var(--dsw-alias-label-primary, #17181a)',
+            },
+          }, [
+            React.createElement('span', { key: 'mark', style: { color: 'var(--dsw-alias-label-primary, #17181a)' } }, selected ? '●' : '○'),
+            // Numbered only where the order decides playback, so the numbering is the
+            // rotation the user is about to get rather than decoration.
+            mode === 'cycle'
+              ? React.createElement('span', {
+                  key: 'order',
+                  'data-dsh-splash-order': String(index + 1),
+                  style: { minWidth: '18px', textAlign: 'right', color: 'var(--dsw-alias-label-tertiary, #8a8f98)', fontVariantNumeric: 'tabular-nums' },
+                }, String(index + 1))
+              : null,
+            React.createElement('span', {
+              key: 'name',
+              style: { flex: 1, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', wordBreak: 'break-all' },
+            }, item.name),
+            playingName === item.name
+              ? React.createElement('span', { key: 'now', 'data-dsh-splash-now': '', style: tagStyle }, t.playingNow)
+              : null,
+            item.name === BUILTIN_NAME
+              ? React.createElement('span', { key: 'builtin', 'data-dsh-splash-builtin': '', style: tagStyle }, t.builtin)
+              : null,
+            React.createElement('span', {
+              key: 'size',
+              style: { color: 'var(--dsw-alias-label-secondary, #5c6068)', fontVariantNumeric: 'tabular-nums' },
+            }, humanBytes(item.bytes)),
+          ]))
+        }
+      }
+
+      rows.push(React.createElement('div', { key: 'library', style: { marginTop: '18px' } }, [
+        React.createElement('div', { key: 'head', style: { display: 'flex', alignItems: 'baseline', gap: '8px' } }, [
+          React.createElement('span', { key: 'label', style: labelStyle }, t.libraryLabel),
+          React.createElement('span', {
+            key: 'count',
+            style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary, #5c6068)' },
+          }, library.status === 'ready' ? String(library.items.length) : ''),
+          React.createElement('button', {
+            key: 'refresh',
+            type: 'button',
+            disabled: busy,
+            onClick: () => { void loadLibrary() },
+            style: {
+              marginLeft: 'auto',
+              appearance: 'none',
+              border: 'none',
+              background: 'transparent',
+              color: 'var(--dsw-alias-label-secondary, #5c6068)',
+              font: 'inherit',
+              fontSize: '12px',
+              cursor: 'pointer',
+              textDecoration: 'underline',
+            },
+          }, t.refresh),
+        ]),
+        library.dir === ''
+          ? null
+          : React.createElement('div', {
+              key: 'dir',
+              style: {
+                marginTop: '2px',
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                fontSize: '11.5px',
+                color: 'var(--dsw-alias-label-secondary, #5c6068)',
+                wordBreak: 'break-all',
+              },
+            }, library.dir),
+        React.createElement('div', {
+          key: 'list',
+          style: {
+            marginTop: '8px',
+            padding: '4px',
+            border: '0.5px solid var(--dsw-alias-border-l4, #d4d4d4)',
+            borderRadius: '10px',
+            maxHeight: '280px',
+            overflowY: 'auto',
+          },
+        }, libraryRows),
+        React.createElement('p', { key: 'hint', style: hintStyle }, t.libraryHint),
+      ]))
+
       rows.push(React.createElement('label', {
         key: 'field',
-        style: { display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px', fontWeight: 500, color: 'var(--dsw-alias-label-primary, #17181a)' },
+        style: { display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '18px', fontSize: '13px', fontWeight: 500, color: 'var(--dsw-alias-label-primary, #17181a)' },
       }, [
         React.createElement('span', { key: 'label' }, t.pathLabel),
         React.createElement('div', { key: 'row', style: { display: 'flex', gap: '8px', alignItems: 'center' } }, [
@@ -919,20 +1328,30 @@ window.__ModuleLoader__.load({
             disabled: busy,
             onChange: (event) => setDraft(event.target.value),
             onKeyDown: (event) => {
-              if (event.key === 'Enter') void save(draft)
+              if (event.key === 'Enter') void saveDraft()
             },
             style: FIELD,
           }),
-          button({ label: t.choose, onClick: choose, disabled: busy }),
+          button({ key: 'choose', label: t.choose, onClick: choose, disabled: busy }),
         ]),
+        React.createElement('span', {
+          key: 'hint',
+          style: { fontSize: '12.5px', fontWeight: 400, lineHeight: 1.6, color: 'var(--dsw-alias-label-secondary, #5c6068)' },
+        }, t.pathHint),
       ]))
 
       rows.push(React.createElement('div', {
         key: 'actions',
         style: { display: 'flex', gap: '8px', alignItems: 'center', marginTop: '12px' },
       }, [
-        button({ key: 'save', label: t.save, onClick: () => void save(draft), disabled: busy, primary: true }),
-        button({ key: 'clear', label: t.clear, onClick: () => void save(''), disabled: busy || draft === '' }),
+        button({ key: 'save', label: t.save, onClick: () => void saveDraft(), disabled: busy, primary: true }),
+        button({ key: 'clear', label: t.clear, onClick: () => void save({ src: '' }, t.cleared), disabled: busy || draft === '' }),
+        unsaved
+          ? React.createElement('span', {
+              key: 'unsaved',
+              style: { fontSize: '12.5px', color: 'var(--dsw-alias-label-secondary, #5c6068)' },
+            }, t.unsaved)
+          : null,
       ]))
 
       if (state.status === 'picking') {
@@ -974,7 +1393,11 @@ window.__ModuleLoader__.load({
         React.createElement('div', {
           key: 'title',
           style: { fontWeight: 600, color: 'var(--dsw-alias-label-primary, #17181a)', marginBottom: '4px' },
-        }, `${t.current}: ${active ? (state.source === 'bundled' ? t.bundled : t.willPlay) : t.none}`),
+        }, `${t.current}: ${statusText}`),
+        React.createElement('div', {
+          key: 'mode',
+          style: { marginBottom: '4px' },
+        }, `${t.modeSummary}: ${t[MODE_LABELS[mode] ?? MODE_LABELS.fixed]}`),
         state.source === 'bundled'
           ? React.createElement('div', { key: 'bundledHint', style: { marginBottom: '4px' } }, t.bundledHint)
           : null,
@@ -1001,7 +1424,7 @@ window.__ModuleLoader__.load({
           globalThis.__DSH_SPLASH__ = {
             probeFormats,
             fadeDelayFor,
-            version: 3,
+            version: 4,
           }
         } catch { /* a frozen globalThis is not worth failing a boot over */ }
 
@@ -1017,10 +1440,15 @@ window.__ModuleLoader__.load({
         //
         // With no video this plugin adds nothing to the frame and DSH boots exactly
         // as it would without the plugin installed.
+        //
+        // The page-global marker, set when the splash dismisses, keeps a later module
+        // reload (client HMR, plugin re-activation) from replaying the opening
+        // animation over an interface the user is already using. Only a real page
+        // load shows the splash again.
         const initial = payloadSync()
         const initialMedia = (initial && initial.media) || { kind: 'none' }
         const initialProblem = (initial && initial.problem) || null
-        if (initialMedia.kind !== 'none' && initialProblem === null) {
+        if (initialMedia.kind !== 'none' && initialProblem === null && !splashPlayed()) {
           ctx.slots.inject(OVERLAY_SLOT, () => ctx.slots.register(
             { name: OVERLAY_SLOT, id: ROW_ID, order: 900 },
             SplashAnimation,
@@ -1031,7 +1459,8 @@ window.__ModuleLoader__.load({
           // normally agrees with the read above — but the two halves read the same
           // file at different moments, and a disagreement here would leave the
           // application hidden with no splash to replace it. Releasing is idempotent
-          // and harmless when no cover was injected at all.
+          // and harmless when no cover was injected at all. This also runs on a
+          // re-activation that skips the replay.
           releaseCover()
         }
       },
