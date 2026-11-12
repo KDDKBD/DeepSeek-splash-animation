@@ -1,0 +1,17 @@
+# Normalise line endings in the repository, so a Windows checkout and a Linux CI
+# run see the same bytes. Without this, Git stores the working tree's CRLF for new
+# files and the CI checks run against different text than the author tested.
+* text=auto eol=lf
+
+# Windows-specific helpers must keep CRLF, because PowerShell and cmd scripts are
+# sensitive to it.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary assets: never touch them.
+*.mp4 binary
+*.png binary
+*.gif binary
+*.ico binary
+*.svg text eol=lf
