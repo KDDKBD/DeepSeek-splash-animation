@@ -4,7 +4,7 @@
 
 插件自带一段默认视频，**装上就能用**，也可以在设置里换成自己的。
 
-![开屏动画：视频铺满画面，右下角是跳过按钮](assets/screenshot-splash.png)
+<img src="preview/splash.gif" width="720" alt="开屏动画：视频铺满画面，右下角是跳过按钮">
 
 ## 推荐安装法
 
